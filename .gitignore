@@ -1,3 +1,7 @@
+# Data folders
+/GDCdata
+/TCGA-STAD
+
 # History files
 .Rhistory
 .Rapp.history
