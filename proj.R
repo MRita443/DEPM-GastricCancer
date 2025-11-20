@@ -15,7 +15,7 @@ library(dplyr)
 
 # PART 1 
 
-#1: Downloading data from the TGCA -------
+#1: Downloading data from the TCGA -------
 
 # create directory with the data
 proj <- "TCGA-STAD" #stomach adenocarcinoma
@@ -131,8 +131,8 @@ dds <- estimateSizeFactors(dds)
 normalized_counts <- counts(dds, normalized=TRUE)
 sum(rowSums(normalized_counts == 0) == ncol(expr.C)) #no gene is 0 on all samples
 
-filtr.expr.N <- as.data.frame(normalized_counts[, 1:ncol(expr.C)])
-filtr.expr.C <- as.data.frame(normalized_counts[, (ncol(expr.C) + 1):ncol(normalized_counts)])
+filtr.expr.N <- as.data.frame(normalized_counts[, 1:ncol(expr.N)])
+filtr.expr.C <- as.data.frame(normalized_counts[, (ncol(expr.N) + 1):ncol(normalized_counts)])
 
 #cancerous sample names were added a ".1" in full.data because  
 #they had the same names as the normal samples
