@@ -13,8 +13,11 @@ library(DT)
 library(readr)
 library(dplyr)
 
-# PART 1 
+setwd('/home/yunbao/Bureau/Sapienza/DEPML/DEPM-GastricCancer')
 
+# PART 1
+
+# QUESTION 1
 #1: Downloading data from the TCGA -------
 
 # create directory with the data
@@ -48,7 +51,20 @@ rna.expr.data.N <- assay(rna.data.N)
 genes.info2 <- BiocGenerics::as.data.frame(rowRanges(rna.data.N))
 all(na.omit(genes.info2) == na.omit(genes.info))
 
+#####################
+# On récupère les données cliniques des associées aux patients
+clinical.query<- GDCquery_clinic(project = proj, type = "clinical", save.csv = FALSE)
+#write.csv(clinical.query, file = file.path(proj,paste(proj, "_clinical_data.txt",sep="")), row.names = FALSE, quote = FALSE)
+
+View(clinical.query)
+table(clinical.query$ajcc_pathologic_stage)
+
+boxplot(age_at_index ~ ajcc_pathologic_stage, data = clinical.query,
+        col = "gold", main = "Title", xlab = "", ylab= "age", las=2 )
+########################################################################
+
 View(rna.expr.data.N)
+View(rna.expr.data.C)
 
 dim(rna.expr.data.C)
 dim(rna.expr.data.N)
@@ -60,6 +76,13 @@ ncol(rna.expr.data.N)
 length(unique(substr(colnames(rna.expr.data.N), 1,12))) #no duplicates 
 ncol(rna.expr.data.C)
 length(unique(substr(colnames(rna.expr.data.C), 1,12))) #no duplicates
+
+patients.C <- substr(colnames(rna.expr.data.C), 1,12)
+sort(table(patients.C)) 
+#keep patients with ony a sample
+unique.patients.C <- names(which(table(patients.C) == 1)) 
+#let's get their index in the list of patients
+idx.unique.pats <- match(patients.C, substr(colnames(rna.expr.data.C), 1,12) )
 
 expr.C <- as.data.frame(rna.expr.data.C)
 expr.N <- as.data.frame(rna.expr.data.N)
@@ -78,7 +101,6 @@ expr.C <- expr.C[, matched, drop = FALSE]
 expr.N <- expr.N[, matched, drop = FALSE]
 
 length(intersect(colnames(expr.N), colnames(expr.C)))
-setdiff(colnames(expr.N), colnames(expr.C))
 
 dim(expr.C)
 dim(expr.N)
@@ -153,3 +175,74 @@ colnames(filtr.expr.C) <- substr(colnames(filtr.expr.C), 1,12)
 # 
 # rownames(filtr.expr.N) <- genes.info2[genes.N, "gene_name"]
 # rownames(filtr.expr.C) <- genes.info[genes.C, "gene_name"]
+
+
+# QUESTION 2 :
+
+# TODO : ask the professor if we need a set of genes of interest
+
+#5: Differentially expressed genes (DEGs)
+
+fc <-  log2(rowMeans(filtr.expr.C) / rowMeans(filtr.expr.N) ) 
+names(fc) <- rownames(filtr.expr.C)
+head(fc)
+
+pval.fc <- sapply(1:nrow(filtr.expr.C), function(i) (t.test(as.numeric(filtr.expr.C[i,]), as.numeric(filtr.expr.N[i,]), paired = T ))$p.value)
+pval.fc.fdr <- p.adjust(pval.fc, method="fdr")
+
+expr.table <- data.frame(cbind(fc, pval.fc.fdr))
+expr.table[,1] <- round(expr.table[,1],2)
+
+# we apply the thresholds
+deg.genes <- rownames(expr.table[abs(expr.table$fc) >= 1.2 & expr.table$pval.fc.fdr <=0.05,]) 
+head(expr.table[deg.genes,], 10)
+write.table(expr.table[deg.genes,], file = "DEG.csv", sep = ";")
+
+#volcano plot
+expr.table$diffexpressed <- "/";
+expr.table$diffexpressed[expr.table$fc >= 1.2 & expr.table$pval.fc.fdr <= 0.05] <- "UP"
+expr.table$diffexpressed[expr.table$fc <= -1.2 & expr.table$pval.fc.fdr <= 0.05] <- "DOWN"
+head(expr.table, 5)
+
+expr.table$diffexpressed <- as.factor(expr.table$diffexpressed)
+summary(expr.table$diffexpressed)
+
+ggplot(data=expr.table, aes(x=fc, y=-log10(pval.fc.fdr), col=diffexpressed))+  
+  geom_point() +
+  xlab("fold change (log2)") + 
+  ylab("-log10 adjusted p-value") +
+  geom_hline(yintercept=-log10(0.01), col="red")+
+  geom_vline(xintercept=1.5, col="red")+
+  geom_vline(xintercept=-1.5, col="red")
+
+#cat(deg.genes , sep = "\n")
+
+
+#6: Adjacency (correlations) matrices of co-expression networks
+
+# CANCER NETWORK
+# correlation between genes
+cor.mat.c <- corr.test(t(filtr.expr.C), use="pairwise", method="spearman", adjust="fdr", ci=FALSE)
+rho.c <- cor.mat.c$r # put the correlations into a matrix
+diag(rho.c) <- 0
+qval.c <- cor.mat.c$p #padj matrix
+qval.c[lower.tri(qval.c)] <- t(qval.c)[lower.tri(qval.c)]
+#retain only links with q <0.01
+adj.mat.c <- rho.c * (qval.c <= 0.01)
+
+# NORMAL NETWORK
+cor.mat.n <- corr.test(t(filtr.expr.N), use="pairwise", method="spearman", adjust="fdr", ci=FALSE)
+rho.n <- cor.mat.n$r
+diag(rho.n) <- 0
+qval.n <- cor.mat.n$p
+qval.n[lower.tri(qval.n)] <- t(qval.n)[lower.tri(qval.n)]
+adj.mat.n <- rho.n * (qval.n <= 0.01)
+
+#7 : Co-expression networks
+
+# CANCER NETWORK :
+# TODO
+
+# NORMAL NETWORK :
+# TODO
+
