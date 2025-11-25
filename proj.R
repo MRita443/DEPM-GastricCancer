@@ -213,7 +213,7 @@ ggplot(data=expr.table, aes(x=fc, y=-log10(pval.fc.fdr), col=diffexpressed))+
   geom_point() +
   xlab("fold change (log2)") + 
   ylab("-log10 adjusted p-value") +
-  geom_hline(yintercept=-log10(0.01), col="red")+
+  geom_hline(yintercept=-log10(0.05), col="red")+
   geom_vline(xintercept=1.2, col="red")+
   geom_vline(xintercept=-1.2, col="red")
 
@@ -253,6 +253,7 @@ adj.mat.n  <- adj.mat.n * (abs(rho.n) >= 0.7)
 adj.bin.n  <- adj.mat.n * 1 # get a binary version of the same matrix
 
 #7 : Co-expression networks
+# ANALYSIS PART
 # Aims to check if network is scale-free or not
 
 # CANCER NETWORK :
@@ -296,7 +297,7 @@ ggnet2(net.c, color = "color", alpha = 0.7, size = 2,  #mode= c("x","y"),
   guides(size = "none")
 ##### CHECK if needed define adj.mat.c with good p-value threshold
 #this is extremely dense... what if we lower the pval threshold?
-#what if it's even lower?
+# TODO : check good threshold for p-value
 adj.mat.c1 <- rho.c * (qval.c <= 1e-3)
 adj.mat.c2 <- rho.c * (qval.c <= 1e-4) #too much?
 #might be useful to look at negative and postive edges separately:
@@ -346,14 +347,16 @@ ggnet2(net.n, color = "color", alpha = 0.7, size = 2,
 
 # See which genes are hubs both in cancer and normal tissue
 intersect(names(hubs.c), names(hubs.n))
+# TODO : identify the hubs selectively characterizing each network
+
 ##### CHECK if needed define adj.mat.n with good p-value threshold
+# TODO : check good threshold for p-value
 adj.mat.n1 <- rho.n * (qval.n <= 1e-3)
 adj.mat.n2 <- rho.n * (qval.n <= 1e-4) #too much?
 ##### 
 
 
 # NOT ASKED IN THE PROJECT, BUT USEFUL FOR VISUALIZATION
-####
 ####
 #8: Plotting the hub subnetwork -----
 
@@ -396,4 +399,53 @@ ggnet2(net.hub,  color = "color",alpha = 0.9, size = 2,
 ####
 ####
 
-# Question 4 
+# Question 4 : Differential Co-expressed Network
+# We chose to use adj.mat.c which is the correlation matrix after filtering with the p-value the non-significative correlations
+# Get z for each conditions (Cancer and Normal)
+z.mat.C <- 0.5 * log((1+adj.mat.c)/(1-adj.mat.c))
+z.mat.N <- 0.5 * log((1+adj.mat.n)/(1-adj.mat.n))
+# Get Z-scores
+Z.mat <- (z.mat.C - z.mat.N)/sqrt((1/(length(filtr.expr.C.DEGs)-3)) + (1/(length(filtr.expr.N.DEGs)-3)))
+Z.mat[abs(Z.mat) < 3] <- 0 # apply threshold
+# We make it binary
+Z.bin <- (abs(Z.mat) != 0) * 1 # any value != 0 takes 1 as value
+
+# ANALYSIS PART (exactly based on analysis question 3)
+#build the network
+net.z <- network(Z.bin, matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights", directed = F)
+### Check
+network.density(net.z) #how much is the network connected
+network.size(net.z) #n nodes
+network.edgecount(net.z)  #n of edges
+###
+clustcoeff(Z.bin, weighted = FALSE)$CC # clustcoeff measures how connected are my neighbors between them
+
+degree.z <- rowSums(Z.bin != 0)
+names(degree.z) <- rownames(Z.bin)
+degree.z <- sort(degree.z, decreasing = T)
+head(degree.z,10)
+sum(degree.z == 0) # check how many unconnected nodes
+# Plot the histogram to see if we have a scale free network or not
+hist(degree.z)
+# Now we want find the hubs (5% of nodes with highest degree values)
+x.z <- quantile(degree.z[degree.z>0],0.95) #top 5% of nodes
+x.z
+hist(degree.z)
+abline(v=x.z, col="red")
+hubs.z <- degree.z[degree.z>=x.z]
+names(hubs.z) 
+#let's enrich them
+#write.table(hubs.c, file = "hubs.csv", sep = ";")
+# Anotate the hubs
+net.z %v% "type" = ifelse(network.vertex.names(net.z) %in% names(hubs.z),"hub", "non-hub")
+net.z %v% "color" = ifelse(net.z %v% "type" == "hub", "tomato", "deepskyblue3")
+network::set.edge.attribute(net.z, "edgecolor", ifelse(net.z %e% "weights" > 0, "red", "blue"))
+# Visualizing
+ggnet2(net.z, color = "color", alpha = 0.7, size = 2,  #mode= c("x","y"),
+       edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15)+
+  guides(size = "none")
+
+# TODO : compare the identified hubs set with those obtained in task 3.
+
+# Question 5 : Patient Similarity Network (PSN)
+# TODO
