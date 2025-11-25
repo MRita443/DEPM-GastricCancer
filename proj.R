@@ -12,6 +12,8 @@ library(SummarizedExperiment)
 library(DT)
 library(readr)
 library(dplyr)
+BiocManager::install("DGCA")
+library(DGCA) # package for differential co-expression network
 
 setwd('/home/yunbao/Bureau/Sapienza/DEPML/DEPM-GastricCancer')
 
@@ -180,14 +182,16 @@ colnames(filtr.expr.C) <- substr(colnames(filtr.expr.C), 1,12)
 # QUESTION 2 :
 
 #5: Differentially expressed genes (DEGs)
-
+# compute fc
 fc <-  log2(rowMeans(filtr.expr.C) / rowMeans(filtr.expr.N) ) 
 names(fc) <- rownames(filtr.expr.C)
 head(fc)
 
+# compute p-value for threshold
 pval.fc <- sapply(1:nrow(filtr.expr.C), function(i) (t.test(as.numeric(filtr.expr.C[i,]), as.numeric(filtr.expr.N[i,]), paired = T ))$p.value)
+# we adjust p-value with fdr method to control false positive
 pval.fc.fdr <- p.adjust(pval.fc, method="fdr")
-
+# table to resume
 expr.table <- data.frame(cbind(fc, pval.fc.fdr))
 expr.table[,1] <- round(expr.table[,1],2)
 
@@ -213,6 +217,9 @@ ggplot(data=expr.table, aes(x=fc, y=-log10(pval.fc.fdr), col=diffexpressed))+
   geom_vline(xintercept=1.2, col="red")+
   geom_vline(xintercept=-1.2, col="red")
 
+filtr.expr.C.DEGs <- filtr.expr.C[rownames(filtr.expr.C) %in% deg.genes, ]
+filtr.expr.N.DEGs <- filtr.expr.N[rownames(filtr.expr.N) %in% deg.genes, ]
+
 #cat(deg.genes , sep = "\n")
 
 # Question 3
@@ -221,7 +228,7 @@ ggplot(data=expr.table, aes(x=fc, y=-log10(pval.fc.fdr), col=diffexpressed))+
 
 # CANCER NETWORK
 # correlation between genes
-cor.mat.c <- corr.test(t(filtr.expr.C), use="pairwise", method="spearman", adjust="fdr", ci=FALSE)
+cor.mat.c <- corr.test(t(filtr.expr.C.DEGs), use="pairwise", method="spearman", adjust="fdr", ci=FALSE)
 # rho.c : matrix containing the correlations
 rho.c <- cor.mat.c$r
 diag(rho.c) <- 0 # put 0 on the diagonal of the correlations matrix
@@ -236,7 +243,7 @@ adj.bin.c  <- adj.mat.c * 1 # get a binary version of the same matrix
 # check if this works
 
 # NORMAL NETWORK
-cor.mat.n <- corr.test(t(filtr.expr.N), use="pairwise", method="spearman", adjust="fdr", ci=FALSE)
+cor.mat.n <- corr.test(t(filtr.expr.N.DEGs), use="pairwise", method="spearman", adjust="fdr", ci=FALSE)
 rho.n <- cor.mat.n$r
 diag(rho.n) <- 0
 qval.n <- cor.mat.n$p
