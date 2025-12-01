@@ -58,6 +58,5 @@ rsconnect/
 
 .RDataTmp1
 
-MANIFEST.txt
-
 *.csv
+DEPM-GastricCancer.Rproj
