@@ -52,3 +52,5 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 .RDataTmp1
+
+DEPM-GastricCancer.Rproj

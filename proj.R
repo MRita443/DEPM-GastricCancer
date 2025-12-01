@@ -12,10 +12,15 @@ library(SummarizedExperiment)
 library(DT)
 library(readr)
 library(dplyr)
-BiocManager::install("DGCA")
 library(DGCA) # package for differential co-expression network
+library(igraph)
+library(TCGAbiolinks)
+library(maftools)
+library(network)
+library(GGally)
 
-setwd('/home/yunbao/Bureau/Sapienza/DEPML/DEPM-GastricCancer')
+set.seed(123)
+setwd('/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer')
 
 # PART 1
 
@@ -339,7 +344,8 @@ hubs.n <- degree.n[degree.n>=y]
 names(hubs.n)
 net.n %v% "type" = ifelse(network.vertex.names(net.n) %in% names(hubs.n),"hub", "non-hub")
 net.n %v% "color" = ifelse(net.n %v% "type" == "hub", "tomato", "deepskyblue3")
-set.edge.attribute(net.n, "edgecolor", ifelse(net.n %e% "weights" > 0, "red", "blue"))
+
+network::set.edge.attribute(net.n, "edgecolor", ifelse(net.n %e% "weights" > 0, "red", "blue"))
 # Visualizing
 ggnet2(net.n, color = "color", alpha = 0.7, size = 2,
        edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15)+
@@ -390,7 +396,7 @@ sum(hub.c.adj < 0)
 
 net.hub %v% "type" = ifelse(network.vertex.names(net.hub) %in% names(hubs.c),"hub", "non-hub")
 net.hub %v% "color" = ifelse(net.hub %v% "type" == "non-hub", "deepskyblue3", "tomato")
-set.edge.attribute(net.hub, "ecolor", ifelse(net.hub %e% "weights" > 0, "red", "blue"))
+network::set.edge.attribute(net.hub, "ecolor", ifelse(net.hub %e% "weights" > 0, "red", "blue"))
 
 ggnet2(net.hub,  color = "color",alpha = 0.9, size = 2, 
        edge.color = "ecolor", edge.alpha = 0.9,  edge.size = 0.15, 
@@ -449,3 +455,160 @@ ggnet2(net.z, color = "color", alpha = 0.7, size = 2,  #mode= c("x","y"),
 
 # Question 5 : Patient Similarity Network (PSN)
 # TODO
+
+
+
+
+
+
+
+
+# =========================================================
+# QUESTION 5: Patient Similarity Network (PSN) & Fusion
+# =========================================================
+
+
+# Helper function to run the Python Bridge
+run_python_community <- function(matrix_data) {
+  # 1. Save matrix to CSV format expected by python script (sep=";", dec=",")
+  write.table(matrix_data, file = "/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer/input-matrix.csv", 
+              sep = ";", dec = ",", row.names = TRUE, col.names = NA)
+  
+  # 2. Run the Python script
+  # Ensure 'python3' and 'bctpy' are installed in your terminal
+  system("cd '/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer/' && /home/rafal/anaconda3/bin/python3 btc-community.py input-matrix.csv")
+  
+  # 3. Read the output
+  if(file.exists("/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer/output.txt")){
+    comm <- read.table("/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer/output.txt", header = FALSE)
+    return(as.factor(comm$V1))
+  } else {
+    stop("Python script did not generate output.txt")
+  }
+}
+
+# ---------------------------------------------------------
+# TASK 5a & 5b: Expression PSN + Community Detection
+# ---------------------------------------------------------
+
+# 1. Transpose: Patients as Rows
+expr.C.transposed <- t(filtr.expr.C.DEGs)
+
+# 2. Compute Similarity (Spearman)
+# We use absolute correlation for similarity strength
+W_expr <- abs(cor(expr.C.transposed, method = "spearman"))
+
+# 3. Thresholding (Optional but recommended for Louvain stability)
+# Keep only strong connections (e.g., > 0.6) to reduce noise
+W_expr_clean <- W_expr
+W_expr_clean[W_expr_clean < 0.6] <- 0 
+
+# 4. Run Python Community Detection
+print("Running Python for Expression Communities...")
+comm_expr <- run_python_community(W_expr_clean)
+
+# 5. Visualization (Using ggnet2 style from template)
+# Create network object
+net.psn.expr <- network(W_expr_clean, matrix.type = "adjacency", directed = FALSE, ignore.eval = FALSE, names.eval = "weights")
+
+# Assign communities to nodes
+net.psn.expr %v% "community" = as.character(comm_expr)
+
+# Plot
+ggnet2(net.psn.expr, color = "community", size = 3, 
+       edge.alpha = 0.2, edge.size = 0.1,
+       main = "PSN: Gene Expression (Cancer)") +
+  guides(color = "none")
+
+
+# ---------------------------------------------------------
+# TASK 5c: Similarity Network Fusion (Expr + Mutation)
+# ---------------------------------------------------------
+
+# --- Step 1 & 2: Get Mutation Data & Matrix (Already done by you) ---
+# Ensuring proper naming
+mut.query <- GDCquery(
+  project = "TCGA-STAD", 
+  data.category = "Simple Nucleotide Variation", 
+  access = "open", 
+  data.type = "Masked Somatic Mutation", 
+  workflow.type = "Aliquot Ensemble Somatic Variant Merging and Masking"
+)
+
+# 2. Prepare the data (Loads it from your hard drive)
+GDCdownload(mut.query) 
+maf <- GDCprepare(mut.query)
+
+# 3. Process into a Binary Matrix
+maf.obj <- read.maf(maf)
+mut.matrix.count <- mutCountMatrix(maf.obj)
+
+# Create the 'mut.matrix.binary' object
+mut.matrix.binary <- (mut.matrix.count > 0) * 1 
+mut.matrix.binary <- t(mut.matrix.binary) # Transpose so Patients are Rows
+
+
+
+rownames(mut.matrix.binary) <- substr(rownames(mut.matrix.binary), 1, 12)
+
+# --- Step 3: Align Patients ---
+common.patients <- intersect(rownames(expr.C.transposed), rownames(mut.matrix.binary))
+print(paste("Number of common patients:", length(common.patients)))
+
+if(length(common.patients) == 0) {
+  stop("No common patients found between RNA-seq and Mutation data! Check your barcode naming.")
+}
+
+# Subset both matrices to shared patients
+dat_expr_sub <- expr.C.transposed[common.patients, ]
+dat_mut_sub  <- mut.matrix.binary[common.patients, ]
+
+# --- Step 4: Compute Similarities ---
+
+# 1. Expression Similarity (Patient vs Patient)
+W_expr_sub <- abs(cor(t(dat_expr_sub), method = "spearman")) 
+
+# Normalize to 0-1
+W_expr_sub <- (W_expr_sub - min(W_expr_sub)) / (max(W_expr_sub) - min(W_expr_sub))
+
+# 2. Mutation Similarity (Jaccard)
+# Jaccard Distance = 1 - Similarity
+dist_mut <- dist(dat_mut_sub, method = "binary") # binary = Jaccard distance
+W_mut <- 1 - as.matrix(dist_mut)
+
+# HANDLE NA: If a patient has 0 mutations, Jaccard might return NaN (0/0). 
+# We assume 0 similarity in that case.
+W_mut[is.na(W_mut)] <- 0
+
+# Normalize to 0-1 (Check if max > min to avoid division by zero)
+if(max(W_mut) > min(W_mut)){
+  W_mut <- (W_mut - min(W_mut)) / (max(W_mut) - min(W_mut))
+}
+
+# --- Step 5: FUSION (Mean Fusion) ---
+# Now both matrices should be Patients x Patients (e.g., 30x30)
+if(all(dim(W_expr_sub) == dim(W_mut))) {
+  W_fused <- (W_expr_sub + W_mut) / 2
+  print("Fusion successful!")
+} else {
+  stop("Dimensions still do not match!")
+}
+
+# --- Step 6: Community Detection on Fused Network ---
+# Use the function you defined earlier
+comm_fused <- run_python_community(W_fused)
+
+# --- Step 7: Visualizing Fused Network ---
+net.psn.fused <- network(W_fused, matrix.type = "adjacency", 
+                         directed = FALSE, ignore.eval = FALSE, names.eval = "weights")
+
+net.psn.fused %v% "community" = as.character(comm_fused)
+
+ggnet2(net.psn.fused, color = "community", size = 4, 
+       edge.alpha = 0.2, edge.size = 0.1,
+       node.label = TRUE, label.size = 2.5,
+       main = "PSN: Fused (Expression + Mutation)") +
+  guides(color = "none")
+
+print("Expression Clusters:"); table(comm_expr)
+print("Fused Clusters:"); table(comm_fused)
