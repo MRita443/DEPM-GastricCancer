@@ -1,3 +1,6 @@
+# Caches
+*.rds
+
 # Data folders
 /GDCdata
 /TCGA-STAD
