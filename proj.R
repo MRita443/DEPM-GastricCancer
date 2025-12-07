@@ -12,10 +12,9 @@ library(SummarizedExperiment)
 library(DT)
 library(readr)
 library(dplyr)
-BiocManager::install("DGCA")
 library(DGCA) # package for differential co-expression network
 
-setwd('/home/yunbao/Bureau/Sapienza/DEPML/DEPM-GastricCancer')
+#setwd('/home/yunbao/Bureau/Sapienza/DEPML/DEPM-GastricCancer')
 
 # PART 1
 
@@ -196,14 +195,14 @@ expr.table <- data.frame(cbind(fc, pval.fc.fdr))
 expr.table[,1] <- round(expr.table[,1],2)
 
 # we apply the thresholds
-deg.genes <- rownames(expr.table[abs(expr.table$fc) >= 1.2 & expr.table$pval.fc.fdr <=0.05,]) 
+deg.genes <- rownames(expr.table[abs(expr.table$fc) >= 1.2 & expr.table$pval.fc.fdr <=0.01,]) 
 head(expr.table[deg.genes,], 10)
 write.table(expr.table[deg.genes,], file = "DEG.csv", sep = ";")
 
 #volcano plot
 expr.table$diffexpressed <- "/";
-expr.table$diffexpressed[expr.table$fc >= 1.2 & expr.table$pval.fc.fdr <= 0.05] <- "UP"
-expr.table$diffexpressed[expr.table$fc <= -1.2 & expr.table$pval.fc.fdr <= 0.05] <- "DOWN"
+expr.table$diffexpressed[expr.table$fc >= 1.2 & expr.table$pval.fc.fdr <= 0.01] <- "UP"
+expr.table$diffexpressed[expr.table$fc <= -1.2 & expr.table$pval.fc.fdr <= 0.01] <- "DOWN"
 head(expr.table, 5)
 
 expr.table$diffexpressed <- as.factor(expr.table$diffexpressed)
@@ -213,7 +212,7 @@ ggplot(data=expr.table, aes(x=fc, y=-log10(pval.fc.fdr), col=diffexpressed))+
   geom_point() +
   xlab("fold change (log2)") + 
   ylab("-log10 adjusted p-value") +
-  geom_hline(yintercept=-log10(0.05), col="red")+
+  geom_hline(yintercept=-log10(0.01), col="red")+
   geom_vline(xintercept=1.2, col="red")+
   geom_vline(xintercept=-1.2, col="red")
 
@@ -235,12 +234,12 @@ diag(rho.c) <- 0 # put 0 on the diagonal of the correlations matrix
 # qval.c : matrix containing p-values of the correlation matrix
 qval.c <- cor.mat.c$p
 qval.c[lower.tri(qval.c)] <- t(qval.c)[lower.tri(qval.c)] #(qvals are reported on the upper triangle only to have the matrix symetric)
-#retain only links with q <0.01 : not asked in the project
-adj.mat.c <- rho.c * (qval.c <= 0.01)
-# keep only |correlation| > 0.7 : asked in the project
+adj.mat.c <- rho.c
+# keep only |correlation| > 0.7
 adj.mat.c  <- adj.mat.c * (abs(rho.c) >= 0.7)
-adj.bin.c  <- adj.mat.c * 1 # get a binary version of the same matrix
-# check if this works
+adj.mat.c <- adj.mat.c * (qval.c <= 1e-4)
+adj.bin.c  <- adj.mat.c
+adj.bin.c[abs(adj.mat.c)>0] <- 1 # get a binary version of the same matrix
 
 # NORMAL NETWORK
 cor.mat.n <- corr.test(t(filtr.expr.N.DEGs), use="pairwise", method="spearman", adjust="fdr", ci=FALSE)
@@ -248,9 +247,12 @@ rho.n <- cor.mat.n$r
 diag(rho.n) <- 0
 qval.n <- cor.mat.n$p
 qval.n[lower.tri(qval.n)] <- t(qval.n)[lower.tri(qval.n)]
-adj.mat.n <- rho.n * (qval.n <= 0.01)
+adj.mat.n <- rho.n
 adj.mat.n  <- adj.mat.n * (abs(rho.n) >= 0.7)
-adj.bin.n  <- adj.mat.n * 1 # get a binary version of the same matrix
+adj.mat.n <- adj.mat.n * (qval.n <= 1e-5)
+adj.bin.n  <- adj.mat.n
+adj.bin.n[abs(adj.mat.n)>0] <- 1 # get a binary version of the same matrix
+# TODO: At this point we have normal network too dense (>0.1), and cancer network not enough dense (<0.005). Ask the teacher what she thinks about these density (is it fine anyway ?) If not, can we put different corr_threshold or p-value_threshold in cancer and normal ?
 
 #7 : Co-expression networks
 # ANALYSIS PART
@@ -259,84 +261,74 @@ adj.bin.n  <- adj.mat.n * 1 # get a binary version of the same matrix
 # CANCER NETWORK :
 #build the network
 net.c <- network(adj.mat.c, matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights", directed = F)
-### Check
+### ANALYSIS Q3.1
 network.density(net.c) #how much is the network connected
 network.size(net.c) #n nodes
 network.edgecount(net.c)  #n of edges
-###
 clustcoeff(adj.mat.c, weighted = FALSE)$CC # clustcoeff measures how connected are my neighbors between them
-### Check
 sum(adj.mat.c != 0) / 2
 #how many positive/negative correlations? 
 sum(adj.mat.c > 0) / 2
 sum(adj.mat.c < 0) / 2
-###
 degree.c <- rowSums(adj.mat.c != 0)
 names(degree.c) <- rownames(adj.mat.c)
 degree.c <- sort(degree.c, decreasing = T)
 head(degree.c,10)
 sum(degree.c == 0) # check how many unconnected nodes
-# Plot the histogram to see if we have a scale free network or not
-hist(degree.c)
+# check if scale-free
+hist(degree.c) # This is obviously a scale-free network !
+###
+### ANALYSIS Q3.2
 # Now we want find the hubs (5% of nodes with highest degree values)
 x <- quantile(degree.c[degree.c>0],0.95) #top 5% of nodes
-x
-hist(degree.c)
+x # x=50 means the 95% highest degree node is >= 50 links
 abline(v=x, col="red")
 hubs.c <- degree.c[degree.c>=x]
 names(hubs.c) 
 #let's enrich them
-write.table(hubs.c, file = "hubs.csv", sep = ";")
+write.table(hubs.c, file = "hubs_c.csv", sep = ";")
+###
+
 # Anotate the hubs
 net.c %v% "type" = ifelse(network.vertex.names(net.c) %in% names(hubs.c),"hub", "non-hub")
 net.c %v% "color" = ifelse(net.c %v% "type" == "hub", "tomato", "deepskyblue3")
 network::set.edge.attribute(net.c, "edgecolor", ifelse(net.c %e% "weights" > 0, "red", "blue"))
 # Visualizing
 ggnet2(net.c, color = "color", alpha = 0.7, size = 2,  #mode= c("x","y"),
-       edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15)+
-  guides(size = "none")
-##### CHECK if needed define adj.mat.c with good p-value threshold
-#this is extremely dense... what if we lower the pval threshold?
-# TODO : check good threshold for p-value
-adj.mat.c1 <- rho.c * (qval.c <= 1e-3)
-adj.mat.c2 <- rho.c * (qval.c <= 1e-4) #too much?
-#might be useful to look at negative and postive edges separately:
-net.c1 <- network(adj.mat.c1* (adj.mat.c1 > 0), matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights")
-ggnet2(net.c1, color = "deepskyblue3", alpha = 0.7, size = 2, 
-       edge.color = "red", edge.alpha = 1, edge.size = 0.15)+
-  guides(size = "none") 
-net.c2 <- network(adj.mat.c2* (adj.mat.c2 < 0),
-                  matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights")
-ggnet2(net.c2, color = "deepskyblue3", alpha = 0.7, size = 2, 
-       edge.color = "blue", edge.alpha = 1, edge.size = 0.15)+
-  guides(size = "none") 
-#####
+       edge.color = "edgecolor",
+       edge.alpha = 1, edge.size = 0.15)+
+      guides(size = "none")
 
 # NORMAL NETWORK :
 net.n <- network(adj.mat.n, matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights")
-### Check
+### ANALYSIS Q3.1
 network.density(net.n)
 network.size(net.n)
 network.edgecount(net.n)
-###
 clustcoeff(adj.mat.n, weighted = FALSE)$CC
-### Check
 sum(adj.mat.n != 0) /2
 sum(adj.mat.n > 0) /2
 sum(adj.mat.n < 0) /2
-###
 degree.n <- rowSums(adj.mat.n != 0)
 names(degree.n) <- rownames(adj.mat.n)
 degree.n <- sort(degree.n, decreasing = T)
 head(degree.n,10)
 sum(degree.n == 0) #unconnected nodes 
-hist(degree.n)
+hist(degree.n) # This is obviously a scale-free network !
+###
+### ANALYSIS Q3.2
+# Now we want find the hubs (5% of nodes with highest degree values)
 y <- quantile(degree.n[degree.n>0],0.95) 
 y
 hist(degree.n)
 abline(v=y, col="red")
 hubs.n <- degree.n[degree.n>=y]
 names(hubs.n)
+#let's enrich them
+write.table(hubs.n, file = "hubs_n.csv", sep = ";")
+###
+
+# Annotate this
 net.n %v% "type" = ifelse(network.vertex.names(net.n) %in% names(hubs.n),"hub", "non-hub")
 net.n %v% "color" = ifelse(net.n %v% "type" == "hub", "tomato", "deepskyblue3")
 set.edge.attribute(net.n, "edgecolor", ifelse(net.n %e% "weights" > 0, "red", "blue"))
@@ -345,16 +337,20 @@ ggnet2(net.n, color = "color", alpha = 0.7, size = 2,
        edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15)+
   guides(size = "none") 
 
+### ANALYSIS Q3.2
 # See which genes are hubs both in cancer and normal tissue
-intersect(names(hubs.c), names(hubs.n))
-# TODO : identify the hubs selectively characterizing each network
+length(names(hubs.c)) # 46
+length(names(hubs.n)) # 74
+length(intersect(names(hubs.c), names(hubs.n))) # 20 -> ~half of cancer genes hubs are also hubs in normal tissue !
 
-##### CHECK if needed define adj.mat.n with good p-value threshold
-# TODO : check good threshold for p-value
-adj.mat.n1 <- rho.n * (qval.n <= 1e-3)
-adj.mat.n2 <- rho.n * (qval.n <= 1e-4) #too much?
-##### 
-
+hubs_intersect_coexpr <- intersect(names(hubs.c), names(hubs.n))
+hubs_intersect_coexpr
+gained_hubs_coexpr <- setdiff(names(hubs.c),names(hubs.n))
+gained_hubs_coexpr
+lost_hubs_coexpr <- setdiff(names(hubs.n),names(hubs.c))
+lost_hubs_coexpr
+# TODO Report : with KEGG look to fonctions which desapeared (hubs in normal not hub in cancer anymore). Also to the fonctions which appeared (hubs in cancer but not in normal). 
+###
 
 # NOT ASKED IN THE PROJECT, BUT USEFUL FOR VISUALIZATION
 ####
@@ -413,20 +409,20 @@ Z.bin <- (abs(Z.mat) != 0) * 1 # any value != 0 takes 1 as value
 # ANALYSIS PART (exactly based on analysis question 3)
 #build the network
 net.z <- network(Z.bin, matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights", directed = F)
-### Check
+### ANALYSIS Q4.1
 network.density(net.z) #how much is the network connected
 network.size(net.z) #n nodes
 network.edgecount(net.z)  #n of edges
-###
 clustcoeff(Z.bin, weighted = FALSE)$CC # clustcoeff measures how connected are my neighbors between them
-
 degree.z <- rowSums(Z.bin != 0)
 names(degree.z) <- rownames(Z.bin)
 degree.z <- sort(degree.z, decreasing = T)
 head(degree.z,10)
 sum(degree.z == 0) # check how many unconnected nodes
 # Plot the histogram to see if we have a scale free network or not
-hist(degree.z)
+hist(degree.z) # This is obviously a scale-free network !
+###
+### ANAYSIS Q4.2
 # Now we want find the hubs (5% of nodes with highest degree values)
 x.z <- quantile(degree.z[degree.z>0],0.95) #top 5% of nodes
 x.z
@@ -435,7 +431,9 @@ abline(v=x.z, col="red")
 hubs.z <- degree.z[degree.z>=x.z]
 names(hubs.z) 
 #let's enrich them
-#write.table(hubs.c, file = "hubs.csv", sep = ";")
+write.table(hubs.c, file = "hubs_z.csv", sep = ";")
+###
+
 # Anotate the hubs
 net.z %v% "type" = ifelse(network.vertex.names(net.z) %in% names(hubs.z),"hub", "non-hub")
 net.z %v% "color" = ifelse(net.z %v% "type" == "hub", "tomato", "deepskyblue3")
@@ -445,7 +443,26 @@ ggnet2(net.z, color = "color", alpha = 0.7, size = 2,  #mode= c("x","y"),
        edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15)+
   guides(size = "none")
 
-# TODO : compare the identified hubs set with those obtained in task 3.
+### ANALYSIS Q4.2
+length(names(hubs.c)) # 46
+length(names(hubs.n)) # 74
+length(names(hubs.z)) # 80
+# TODO Report : with KEGG look to functions in hubs of names(hubs.z) because it shows which biological process are really perturbated
+
+length(intersect(names(hubs.c), names(hubs.n))) # 20 -> ~half of co_expr cancer genes hubs are also hubs in co_expr normal tissue !
+length(intersect(names(hubs.z), names(hubs.n))) # 54 co_expr normal hubs are also in diff_coexpr hubs !
+length(intersect(names(hubs.c), names(hubs.z))) # 4 co_expr cancer hubs are also in diff_coexpr hubs !
+length(intersect(names(hubs.z), hubs_intersect_coexpr)) # 4 genes are always hubs in coexpr tissues and diffcoexpr newtworks
+
+hubs_intersect_diffcoexpr_and_coexpr <- intersect(names(hubs.z), hubs_intersect_coexpr)
+hubs_intersect_diffcoexpr
+# ANK2 MAPK10 NEGR1 and MPDZ were all hubs in cancer and normal, but still after diffcoexpr
+
+gained_hubs_diffcoexpr <- setdiff(names(hubs.z), names(hubs.c))
+gained_hubs_diffcoexpr <- setdiff(gained_hubs_diffcoexpr, names(hubs.n))
+gained_hubs_diffcoexpr
+# TODO Report : with KEGG look to fonctions which are in diff_coexpr but non hubs neither in cancer or normal (cf gained_hubs_diffcoexpr) those are the relations which changed the more !
+###
+
 
 # Question 5 : Patient Similarity Network (PSN)
-# TODO
