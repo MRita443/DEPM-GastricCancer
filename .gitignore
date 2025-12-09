@@ -54,3 +54,10 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+
+.RDataTmp1
+
+MANIFEST.txt
+
+*.csv
