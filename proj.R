@@ -12,7 +12,6 @@ library(SummarizedExperiment)
 library(DT)
 library(readr)
 library(dplyr)
-library(DGCA) # package for differential co-expression network
 library(igraph)
 library(TCGAbiolinks)
 library(maftools)
@@ -612,3 +611,156 @@ ggnet2(net.psn.fused, color = "community", size = 4,
 
 print("Expression Clusters:"); table(comm_expr)
 print("Fused Clusters:"); table(comm_fused)
+
+# ------------------------
+# LOAD REQUIRED LIBRARIES
+# ------------------------
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(pathview)
+library(dplyr)
+
+# Extract ENSEMBL IDs for up/down regulated genes
+res_up_ensembl   <- rownames(expr.table[expr.table$diffexpressed == "UP", ])
+res_down_ensembl <- rownames(expr.table[expr.table$diffexpressed == "DOWN", ])
+
+# ------------------------
+# GO ENRICHMENT (Biological Process)
+# ------------------------
+
+# Remove version numbers from ENSEMBL IDs
+res_up_clean   <- sub("\\..*$", "", res_up_ensembl)
+res_down_clean <- sub("\\..*$", "", res_down_ensembl)
+
+# Convert ENSEMBL → SYMBOL
+up_symbols   <- bitr(res_up_clean, fromType = "ENSEMBL", toType = "SYMBOL", OrgDb = org.Hs.eg.db)$SYMBOL
+down_symbols <- bitr(res_down_clean, fromType = "ENSEMBL", toType = "SYMBOL", OrgDb = org.Hs.eg.db)$SYMBOL
+
+# Build comparison list for clusterProfiler
+comparison <- list(
+  Upregulated   = na.omit(up_symbols),
+  Downregulated = na.omit(down_symbols)
+)
+
+# GO enrichment (Biological Process)
+CompareGO_BP <- compareCluster(
+  comparison,
+  fun = "enrichGO",
+  OrgDb = org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP",
+  readable = TRUE
+)
+
+# Visualize GO enrichment
+dotplot(CompareGO_BP, title = "GO Biological Process Enrichment")
+
+# ------------------------
+# KEGG ENRICHMENT
+# ------------------------
+
+# Convert ENSEMBL → ENTREZ IDs
+up_entrez   <- bitr(res_up_clean, fromType = "ENSEMBL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)$ENTREZID
+down_entrez <- bitr(res_down_clean, fromType = "ENSEMBL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)$ENTREZID
+
+# Combine all DEGs and remove NAs
+all_entrez <- na.omit(c(up_entrez, down_entrez))
+
+# KEGG enrichment
+result_KEGG <- enrichKEGG(gene = all_entrez, organism = "hsa")
+
+# Visualize KEGG enrichment
+dotplot(result_KEGG, title = "KEGG Pathway Enrichment")
+
+# Optional: view table
+kegg_table <- as.data.frame(result_KEGG@result)
+View(kegg_table)
+
+# ------------------------
+# PREPARE DATA FOR PATHVIEW
+# ------------------------
+
+# Combine up- and down-regulated DEGs with fold change
+matrice <- rbind(
+  expr.table[expr.table$diffexpressed == "UP", , drop = FALSE],
+  expr.table[expr.table$diffexpressed == "DOWN", , drop = FALSE]
+)
+
+# Clean Ensembl IDs
+matrice$ENSEMBL <- sub("\\..*$", "", rownames(matrice))
+
+# Map Ensembl → ENTREZ
+mapping <- bitr(matrice$ENSEMBL, fromType = "ENSEMBL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+
+# Merge mapping and keep fold change
+matrice <- merge(matrice, mapping, by = "ENSEMBL", all.x = TRUE)
+matrice <- matrice[, c("fc", "ENTREZID")]
+matrice <- na.omit(matrice)
+
+# Aggregate duplicates: take max absolute fold change
+matrice <- aggregate(fc ~ ENTREZID, data = matrice, FUN = function(x) x[which.max(abs(x))])
+
+# Set ENTREZ IDs as rownames
+rownames(matrice) <- matrice$ENTREZID
+matrice <- matrice[, "fc", drop = FALSE]
+
+# Preview
+head(matrice)
+
+# ------------------------
+# RUN PATHVIEW
+# ------------------------
+pathway_id <- "hsa04020"  # Calcium signaling pathway
+
+pathview(
+  gene.data  = matrice,
+  species    = "hsa",
+  pathway    = pathway_id,
+  lowcol     = "blue",   # down-regulated
+  highcol    = "red",    # up-regulated
+  limit      = c(min(matrice[,1]), max(matrice[,1])),
+  out.suffix = "Calcium_DEGs"
+)
+
+# ------------------------
+# HUB ENRICHMENT
+# ------------------------
+
+# Function to clean ENSEMBL IDs and convert to SYMBOLs
+convert_to_symbols <- function(genes) {
+  genes_clean <- sub("\\..*$", "", names(genes))
+  na.omit(bitr(genes_clean, fromType = "ENSEMBL", toType = "SYMBOL", OrgDb = org.Hs.eg.db)$SYMBOL)
+}
+
+# Convert hub genes
+hub_list <- list(
+  Cancer_Hubs = convert_to_symbols(hubs.c),
+  Normal_Hubs = convert_to_symbols(hubs.n),
+  DiffNet_Hubs = convert_to_symbols(hubs.z)
+)
+
+# GO enrichment for hubs
+hub_GO_BP <- compareCluster(
+  hub_list,
+  fun = "enrichGO",
+  OrgDb = org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP",
+  readable = TRUE
+)
+
+# Visualize
+dotplot(hub_GO_BP, title = "GO Biological Process Enrichment for Hubs")
+
+# Convert SYMBOL → ENTREZ IDs for KEGG enrichment
+hub_entrez <- lapply(hub_list, function(x) bitr(x, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)$ENTREZID)
+
+# KEGG enrichment for hubs
+hub_KEGG <- compareCluster(
+  hub_entrez,
+  fun = "enrichKEGG",
+  organism = "hsa"
+)
+
+# Visualize
+dotplot(hub_KEGG, title = "KEGG Pathway Enrichment for Hubs")
