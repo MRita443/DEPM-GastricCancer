@@ -710,7 +710,7 @@ head(matrice)
 # ------------------------
 # RUN PATHVIEW
 # ------------------------
-pathway_id <- "hsa04020"  # Calcium signaling pathway
+pathway_id <- "hsa04820"  # Cytoskeleton in muscle cells
 
 pathview(
   gene.data  = matrice,
@@ -719,7 +719,7 @@ pathview(
   lowcol     = "blue",   # down-regulated
   highcol    = "red",    # up-regulated
   limit      = c(min(matrice[,1]), max(matrice[,1])),
-  out.suffix = "Calcium_DEGs"
+  out.suffix = "Cyto_muscle_DEGs"
 )
 
 # ------------------------
@@ -763,4 +763,35 @@ hub_KEGG <- compareCluster(
 )
 
 # Visualize
-dotplot(hub_KEGG, title = "KEGG Pathway Enrichment for Hubs")
+dotplot(hub_KEGG, title = "KEGG Pathway Enrichment for Hubs") # ASK: Why is this not showing DiffHubs??
+
+# ------------------------
+# PATHVIEW FOR HUBS
+# ------------------------
+
+
+# 1️⃣ Choose the hub set to visualize:
+# Options: "Cancer_Hubs", "Normal_Hubs", "DiffNet_Hubs"
+hub_type <- "Cancer_Hubs"  # change as needed
+
+# 2️⃣ Convert hubs to ENTREZ IDs (if not done yet)
+hub_genes <- hub_list[[hub_type]]
+hub_entrez <- bitr(hub_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)$ENTREZID
+
+# 3️⃣ Subset fold change matrix to include only hub genes
+# 'matrice' has ENTREZ IDs as rownames
+hub_fc <- matrice[rownames(matrice) %in% hub_entrez, , drop = FALSE]
+
+# 4️⃣ Specify the KEGG pathway you want to visualize
+hub_pathway_id <- "hsa04820" # Cytoskeleton in muscle cells
+
+# 5️⃣ Run Pathview (same style as DEGs)
+pathview(
+  gene.data  = hub_fc,
+  species    = "hsa",
+  pathway    = hub_pathway_id,
+  lowcol     = "blue",        # down-regulated
+  highcol    = "red",         # up-regulated
+  limit      = c(min(hub_fc[,1]), max(hub_fc[,1])),
+  out.suffix = paste0(hub_type, "_", hub_pathway_id)
+)
