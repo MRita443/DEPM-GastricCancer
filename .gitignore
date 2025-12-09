@@ -52,3 +52,7 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 .RDataTmp1
+
+df.rds
+
+MANIFEST.txt
