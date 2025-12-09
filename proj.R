@@ -17,21 +17,12 @@ library(SummarizedExperiment)
 library(DT)
 library(readr)
 library(dplyr)
-<<<<<<< HEAD
 library(igraph)
-library(TCGAbiolinks)
 library(maftools)
-library(network)
-library(GGally)
-
-set.seed(123)
-setwd('/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer')
-=======
 
 ###############################################
 # 1. Download data from TCGA
 ###############################################
->>>>>>> 6e8b92d8f71537417d7c7fcd19b3911e1e357640
 
 proj <- "TCGA-STAD"   # Stomach adenocarcinoma
 data_dir <- "TCGA-STAD"
@@ -403,7 +394,7 @@ abline(v = y, col = "red")
 
 hubs.n <- degree.n[degree.n >= y]
 names(hubs.n)
-<<<<<<< HEAD
+
 net.n %v% "type" = ifelse(network.vertex.names(net.n) %in% names(hubs.n),"hub", "non-hub")
 net.n %v% "color" = ifelse(net.n %v% "type" == "hub", "tomato", "deepskyblue3")
 
@@ -412,8 +403,6 @@ network::set.edge.attribute(net.n, "edgecolor", ifelse(net.n %e% "weights" > 0, 
 ggnet2(net.n, color = "color", alpha = 0.7, size = 2,
        edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15)+
   guides(size = "none") 
-=======
->>>>>>> 6e8b92d8f71537417d7c7fcd19b3911e1e357640
 
 write.table(hubs.n, file = "hubs_n.csv", sep = ";")
 
@@ -489,14 +478,8 @@ network.density(net.hub)
 sum(hub.c.adj > 0)
 sum(hub.c.adj < 0)
 
-<<<<<<< HEAD
-net.hub %v% "type" = ifelse(network.vertex.names(net.hub) %in% names(hubs.c),"hub", "non-hub")
-net.hub %v% "color" = ifelse(net.hub %v% "type" == "non-hub", "deepskyblue3", "tomato")
-network::set.edge.attribute(net.hub, "ecolor", ifelse(net.hub %e% "weights" > 0, "red", "blue"))
-=======
 net.hub %v% "type"  <- ifelse(network.vertex.names(net.hub) %in% names(hubs.c), "hub", "non-hub")
 net.hub %v% "color" <- ifelse(net.hub %v% "type" == "non-hub", "deepskyblue3", "tomato")
->>>>>>> 6e8b92d8f71537417d7c7fcd19b3911e1e357640
 
 set.edge.attribute(
   net.hub, "ecolor",
@@ -563,20 +546,44 @@ abline(v = x.z, col = "red")
 hubs.z <- degree.z[degree.z >= x.z]
 names(hubs.z)
 
-<<<<<<< HEAD
-# Question 5 : Patient Similarity Network (PSN)
-# TODO
+write.table(hubs.c, file = "hubs_z.csv", sep = ";")
 
 
+# Annotate and plot differential network
+net.z %v% "type"  <- ifelse(network.vertex.names(net.z) %in% names(hubs.z), "hub", "non-hub")
+net.z %v% "color" <- ifelse(net.z %v% "type" == "hub", "tomato", "deepskyblue3")
+
+network::set.edge.attribute(
+  net.z, "edgecolor",
+  ifelse(net.z %e% "weights" > 0, "red", "blue")
+)
+
+ggnet2(
+  net.z, color = "color", alpha = 0.7, size = 2,
+  edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15
+) + guides(size = "none")
 
 
+# --- Hub comparisons ---
+length(names(hubs.c))  # 59
+length(names(hubs.n))  # 56
+length(names(hubs.z))  # 70
 
+length(intersect(names(hubs.c), names(hubs.n)))  # 18
+length(intersect(names(hubs.z), names(hubs.n)))  # 49
+length(intersect(names(hubs.c), names(hubs.z)))  # 21
+length(intersect(names(hubs.z), hubs_intersect_coexpr))  # 14
 
+hubs_intersect_diffcoexpr_and_coexpr <- intersect(names(hubs.z), hubs_intersect_coexpr)
+hubs_intersect_diffcoexpr_and_coexpr
 
+gained_hubs_diffcoexpr <- setdiff(names(hubs.z), names(hubs.c))
+gained_hubs_diffcoexpr <- setdiff(gained_hubs_diffcoexpr, names(hubs.n))
+gained_hubs_diffcoexpr
 
-# =========================================================
-# QUESTION 5: Patient Similarity Network (PSN) & Fusion
-# =========================================================
+###############################################################################
+# QUESTION 5 : Patient Similarity Network (PSN)
+###############################################################################
 
 
 # Helper function to run the Python Bridge
@@ -632,10 +639,6 @@ ggnet2(net.psn.expr, color = "community", size = 3,
   guides(color = "none")
 
 
-# ---------------------------------------------------------
-# TASK 5c: Similarity Network Fusion (Expr + Mutation)
-# ---------------------------------------------------------
-
 # --- Step 1 & 2: Get Mutation Data & Matrix (Already done by you) ---
 # Ensuring proper naming
 mut.query <- GDCquery(
@@ -657,8 +660,6 @@ mut.matrix.count <- mutCountMatrix(maf.obj)
 # Create the 'mut.matrix.binary' object
 mut.matrix.binary <- (mut.matrix.count > 0) * 1 
 mut.matrix.binary <- t(mut.matrix.binary) # Transpose so Patients are Rows
-
-
 
 rownames(mut.matrix.binary) <- substr(rownames(mut.matrix.binary), 1, 12)
 
@@ -907,46 +908,3 @@ pathview(
   limit      = c(min(hub_fc[,1]), max(hub_fc[,1])),
   out.suffix = paste0(hub_type, "_", hub_pathway_id)
 )
-=======
-write.table(hubs.c, file = "hubs_z.csv", sep = ";")
-
-
-# Annotate and plot differential network
-net.z %v% "type"  <- ifelse(network.vertex.names(net.z) %in% names(hubs.z), "hub", "non-hub")
-net.z %v% "color" <- ifelse(net.z %v% "type" == "hub", "tomato", "deepskyblue3")
-
-network::set.edge.attribute(
-  net.z, "edgecolor",
-  ifelse(net.z %e% "weights" > 0, "red", "blue")
-)
-
-ggnet2(
-  net.z, color = "color", alpha = 0.7, size = 2,
-  edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15
-) + guides(size = "none")
-
-
-# --- Hub comparisons ---
-length(names(hubs.c))  # 59
-length(names(hubs.n))  # 56
-length(names(hubs.z))  # 70
-
-length(intersect(names(hubs.c), names(hubs.n)))  # 18
-length(intersect(names(hubs.z), names(hubs.n)))  # 49
-length(intersect(names(hubs.c), names(hubs.z)))  # 21
-length(intersect(names(hubs.z), hubs_intersect_coexpr))  # 14
-
-hubs_intersect_diffcoexpr_and_coexpr <- intersect(names(hubs.z), hubs_intersect_coexpr)
-hubs_intersect_diffcoexpr_and_coexpr
-
-gained_hubs_diffcoexpr <- setdiff(names(hubs.z), names(hubs.c))
-gained_hubs_diffcoexpr <- setdiff(gained_hubs_diffcoexpr, names(hubs.n))
-gained_hubs_diffcoexpr
-
-
-###############################################################################
-# QUESTION 5 : Patient Similarity Network (PSN)
-###############################################################################
-
-# (Code continues…)
->>>>>>> 6e8b92d8f71537417d7c7fcd19b3911e1e357640
