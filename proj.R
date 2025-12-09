@@ -237,7 +237,7 @@ qval.c[lower.tri(qval.c)] <- t(qval.c)[lower.tri(qval.c)] #(qvals are reported o
 adj.mat.c <- rho.c
 # keep only |correlation| > 0.7
 adj.mat.c  <- adj.mat.c * (abs(rho.c) >= 0.7)
-adj.mat.c <- adj.mat.c * (qval.c <= 1e-4)
+adj.mat.c <- adj.mat.c * (qval.c <= 1e-3)
 adj.bin.c  <- adj.mat.c
 adj.bin.c[abs(adj.mat.c)>0] <- 1 # get a binary version of the same matrix
 
@@ -248,11 +248,10 @@ diag(rho.n) <- 0
 qval.n <- cor.mat.n$p
 qval.n[lower.tri(qval.n)] <- t(qval.n)[lower.tri(qval.n)]
 adj.mat.n <- rho.n
-adj.mat.n  <- adj.mat.n * (abs(rho.n) >= 0.7)
+adj.mat.n  <- adj.mat.n * (abs(rho.n) >= 0.85) # we use a more selective threshold to have comparable networks (between cancer and normal)
 adj.mat.n <- adj.mat.n * (qval.n <= 1e-5)
 adj.bin.n  <- adj.mat.n
 adj.bin.n[abs(adj.mat.n)>0] <- 1 # get a binary version of the same matrix
-# TODO: At this point we have normal network too dense (>0.1), and cancer network not enough dense (<0.005). Ask the teacher what she thinks about these density (is it fine anyway ?) If not, can we put different corr_threshold or p-value_threshold in cancer and normal ?
 
 #7 : Co-expression networks
 # ANALYSIS PART
@@ -339,9 +338,9 @@ ggnet2(net.n, color = "color", alpha = 0.7, size = 2,
 
 ### ANALYSIS Q3.2
 # See which genes are hubs both in cancer and normal tissue
-length(names(hubs.c)) # 46
-length(names(hubs.n)) # 74
-length(intersect(names(hubs.c), names(hubs.n))) # 20 -> ~half of cancer genes hubs are also hubs in normal tissue !
+length(names(hubs.c)) # 59
+length(names(hubs.n)) # 56
+length(intersect(names(hubs.c), names(hubs.n))) # 18 -> they share ~1/3 of their hubs
 
 hubs_intersect_coexpr <- intersect(names(hubs.c), names(hubs.n))
 hubs_intersect_coexpr
@@ -444,19 +443,19 @@ ggnet2(net.z, color = "color", alpha = 0.7, size = 2,  #mode= c("x","y"),
   guides(size = "none")
 
 ### ANALYSIS Q4.2
-length(names(hubs.c)) # 46
-length(names(hubs.n)) # 74
-length(names(hubs.z)) # 80
+length(names(hubs.c)) # 59
+length(names(hubs.n)) # 56
+length(names(hubs.z)) # 70
 # TODO Report : with KEGG look to functions in hubs of names(hubs.z) because it shows which biological process are really perturbated
 
-length(intersect(names(hubs.c), names(hubs.n))) # 20 -> ~half of co_expr cancer genes hubs are also hubs in co_expr normal tissue !
-length(intersect(names(hubs.z), names(hubs.n))) # 54 co_expr normal hubs are also in diff_coexpr hubs !
-length(intersect(names(hubs.c), names(hubs.z))) # 4 co_expr cancer hubs are also in diff_coexpr hubs !
-length(intersect(names(hubs.z), hubs_intersect_coexpr)) # 4 genes are always hubs in coexpr tissues and diffcoexpr newtworks
+length(intersect(names(hubs.c), names(hubs.n))) # 18 -> ~half of co_expr cancer genes hubs are also hubs in co_expr normal tissue !
+length(intersect(names(hubs.z), names(hubs.n))) # 49 co_expr normal hubs are also in diff_coexpr hubs !
+length(intersect(names(hubs.c), names(hubs.z))) # 21 co_expr cancer hubs are also in diff_coexpr hubs !
+length(intersect(names(hubs.z), hubs_intersect_coexpr)) # 14 genes are always hubs in coexpr tissues and diffcoexpr newtworks
 
 hubs_intersect_diffcoexpr_and_coexpr <- intersect(names(hubs.z), hubs_intersect_coexpr)
-hubs_intersect_diffcoexpr
-# ANK2 MAPK10 NEGR1 and MPDZ were all hubs in cancer and normal, but still after diffcoexpr
+hubs_intersect_diffcoexpr_and_coexpr
+# FNBP1 TMTC1 PNCK, CSRP1 and others were all hubs in cancer and normal, but still after diffcoexpr
 
 gained_hubs_diffcoexpr <- setdiff(names(hubs.z), names(hubs.c))
 gained_hubs_diffcoexpr <- setdiff(gained_hubs_diffcoexpr, names(hubs.n))
