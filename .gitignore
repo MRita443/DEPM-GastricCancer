@@ -1,3 +1,6 @@
+# Caches
+*.rds
+
 # Data folders
 /GDCdata
 /TCGA-STAD
@@ -56,6 +59,9 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
-.RDataTmp1
 
+
+.RDataTmp1
 DEPM-GastricCancer.Rproj
+MANIFEST.txt
+*.csv
