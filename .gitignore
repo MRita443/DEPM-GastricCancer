@@ -1,3 +1,6 @@
+# Caches
+*.rds
+
 # Data folders
 /GDCdata
 /TCGA-STAD
@@ -51,8 +54,8 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
-.RDataTmp1
 
-df.rds
+
+.RDataTmp1
 
 MANIFEST.txt
