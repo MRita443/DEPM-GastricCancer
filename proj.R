@@ -20,7 +20,6 @@ library(network)
 library(GGally)
 
 set.seed(123)
-setwd('/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer')
 
 # PART 1
 
@@ -454,33 +453,21 @@ ggnet2(net.z, color = "color", alpha = 0.7, size = 2,  #mode= c("x","y"),
 # TODO : compare the identified hubs set with those obtained in task 3.
 
 # Question 5 : Patient Similarity Network (PSN)
-# TODO
-
-
-
-
-
-
-
-
-# =========================================================
-# QUESTION 5: Patient Similarity Network (PSN) & Fusion
-# =========================================================
-
 
 # Helper function to run the Python Bridge
 run_python_community <- function(matrix_data) {
   # 1. Save matrix to CSV format expected by python script (sep=";", dec=",")
-  write.table(matrix_data, file = "/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer/input-matrix.csv", 
+  write.table(matrix_data, file = "input-matrix.csv", 
               sep = ";", dec = ",", row.names = TRUE, col.names = NA)
   
   # 2. Run the Python script
   # Ensure 'python3' and 'bctpy' are installed in your terminal
-  system("cd '/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer/' && /home/rafal/anaconda3/bin/python3 btc-community.py input-matrix.csv")
+  path_to_appropriate_python_interpreter = '/home/rafal/anaconda3/bin/python3'
+  system(paste(path_to_appropriate_python_interpreter,'btc-community.py input-matrix.csv'))
   
   # 3. Read the output
-  if(file.exists("/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer/output.txt")){
-    comm <- read.table("/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer/output.txt", header = FALSE)
+  if(file.exists("output.txt")){
+    comm <- read.table("output.txt", header = FALSE)
     return(as.factor(comm$V1))
   } else {
     stop("Python script did not generate output.txt")
@@ -530,7 +517,7 @@ ggnet2(net.psn.expr, color = "community", size = 3,
 # --- Step 1 & 2: Get Mutation Data & Matrix (Already done by you) ---
 # Ensuring proper naming
 mut.query <- GDCquery(
-  project = "TCGA-STAD", 
+  project = proj,
   data.category = "Simple Nucleotide Variation", 
   access = "open", 
   data.type = "Masked Somatic Mutation", 
@@ -607,6 +594,8 @@ if(all(dim(W_expr_sub) == dim(W_mut))) {
   W_fused <- (W_expr_sub + W_mut) / 2
   
   diag(W_fused) <- 0
+  
+  W_fused[W_fused < 0.6] <- 0
   
   print("Fusion successful!")
 } else {
