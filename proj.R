@@ -528,7 +528,6 @@ names(hubs.z)
 
 write.table(hubs.z, file = "hubs_z.csv", sep = ";")
 
-
 # Annotate and plot differential network
 net.z %v% "type"  <- ifelse(network.vertex.names(net.z) %in% names(hubs.z), "hub", "non-hub")
 net.z %v% "color" <- ifelse(net.z %v% "type" == "hub", "tomato", "deepskyblue3")
@@ -591,20 +590,20 @@ length(intersect(names(hubs.c),names(hubs.n))) # the lower -> the more altered i
 # QUESTION 5 : Patient Similarity Network (PSN)
 ###############################################################################
 
-
 # Helper function to run the Python Bridge
 run_python_community <- function(matrix_data) {
   # 1. Save matrix to CSV format expected by python script (sep=";", dec=",")
-  write.table(matrix_data, file = "/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer/input-matrix.csv", 
+  write.table(matrix_data, file = "input-matrix.csv", 
               sep = ";", dec = ",", row.names = TRUE, col.names = NA)
   
   # 2. Run the Python script
   # Ensure 'python3' and 'bctpy' are installed in your terminal
-  system("cd '/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer/' && /home/rafal/anaconda3/bin/python3 btc-community.py input-matrix.csv")
+  path_to_appropriate_python_interpreter = '/home/rafal/anaconda3/bin/python3'
+  system(paste(path_to_appropriate_python_interpreter,'btc-community.py input-matrix.csv'))
   
   # 3. Read the output
-  if(file.exists("/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer/output.txt")){
-    comm <- read.table("/home/rafal/Documents/studia magisterskie/semestr_2/DEPM-GastricCancer/output.txt", header = FALSE)
+  if(file.exists("output.txt")){
+    comm <- read.table("output.txt", header = FALSE)
     return(as.factor(comm$V1))
   } else {
     stop("Python script did not generate output.txt")
@@ -620,12 +619,14 @@ expr.C.transposed <- t(filtr.expr.C.DEGs)
 
 # 2. Compute Similarity (Spearman)
 # We use absolute correlation for similarity strength
-W_expr <- abs(cor(expr.C.transposed, method = "spearman"))
+W_expr <- abs(cor(filtr.expr.C.DEGs, method = "spearman"))
 
 # 3. Thresholding (Optional but recommended for Louvain stability)
 # Keep only strong connections (e.g., > 0.6) to reduce noise
 W_expr_clean <- W_expr
 W_expr_clean[W_expr_clean < 0.6] <- 0 
+
+diag(W_expr_clean) <- 0
 
 # 4. Run Python Community Detection
 print("Running Python for Expression Communities...")
@@ -648,7 +649,7 @@ ggnet2(net.psn.expr, color = "community", size = 3,
 # --- Step 1 & 2: Get Mutation Data & Matrix (Already done by you) ---
 # Ensuring proper naming
 mut.query <- GDCquery(
-  project = "TCGA-STAD", 
+  project = proj,
   data.category = "Simple Nucleotide Variation", 
   access = "open", 
   data.type = "Masked Somatic Mutation", 
@@ -669,17 +670,31 @@ mut.matrix.binary <- t(mut.matrix.binary) # Transpose so Patients are Rows
 
 rownames(mut.matrix.binary) <- substr(rownames(mut.matrix.binary), 1, 12)
 
-# --- Step 3: Align Patients ---
+# =========================================================
+# CORRECTED STEP 3: Align Patients (Fixing Separators)
+# =========================================================
+
+# 1. Fix separators in Expression Data (Replace '.' with '-')
+rownames(expr.C.transposed) <- gsub("\\.", "-", rownames(expr.C.transposed))
+
+# 2. Ensure Mutation Data is also formatted (Trim to 12 chars if needed)
+# (Your diagnostics show they are already 12 chars, but this is safe to keep)
+rownames(mut.matrix.binary) <- substr(rownames(mut.matrix.binary), 1, 12)
+
+# 3. Now Find Intersection
 common.patients <- intersect(rownames(expr.C.transposed), rownames(mut.matrix.binary))
 print(paste("Number of common patients:", length(common.patients)))
 
+# 4. Stop if still empty (Safety check)
 if(length(common.patients) == 0) {
-  stop("No common patients found between RNA-seq and Mutation data! Check your barcode naming.")
+  stop("No common patients! Please check if the patient IDs (e.g. TCGA-XX-XXXX) actually overlap between the two datasets.")
 }
 
-# Subset both matrices to shared patients
+# 5. Subset both matrices to shared patients
 dat_expr_sub <- expr.C.transposed[common.patients, ]
 dat_mut_sub  <- mut.matrix.binary[common.patients, ]
+
+print("Step 3 Complete: Patients aligned successfully.")
 
 # --- Step 4: Compute Similarities ---
 
@@ -707,6 +722,11 @@ if(max(W_mut) > min(W_mut)){
 # Now both matrices should be Patients x Patients (e.g., 30x30)
 if(all(dim(W_expr_sub) == dim(W_mut))) {
   W_fused <- (W_expr_sub + W_mut) / 2
+  
+  diag(W_fused) <- 0
+  
+  W_fused[W_fused < 0.6] <- 0
+  
   print("Fusion successful!")
 } else {
   stop("Dimensions still do not match!")
