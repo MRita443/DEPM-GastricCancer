@@ -1,6 +1,14 @@
+# Caches
+*.rds
+
 # Data folders
 /GDCdata
 /TCGA-STAD
+
+# Generated Images
+*.png
+*.jpg
+*.xml
 
 # History files
 .Rhistory
@@ -51,6 +59,11 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
-.RDataTmp1
 
+# Python Env
+/venv
+
+.RDataTmp1
 DEPM-GastricCancer.Rproj
+*.csv
+*.txt

@@ -8,7 +8,7 @@ if __name__ == "__main__":
 
 #print(inFile)
 
-inp = pd.read_csv("input-matrix.csv", sep= ";", index_col = 0, decimal = ",")
+inp = pd.read_csv(inFile, sep= ";", index_col = 0, decimal = ",")
 
 mat = inp.to_numpy(copy=True)
 
