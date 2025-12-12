@@ -5,6 +5,11 @@
 /GDCdata
 /TCGA-STAD
 
+# Generated Images
+*.png
+*.jpg
+*.xml
+
 # History files
 .Rhistory
 .Rapp.history
@@ -55,9 +60,10 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 
+# Python Env
+/venv
 
 .RDataTmp1
-
-MANIFEST.txt
-
+DEPM-GastricCancer.Rproj
 *.csv
+*.txt
