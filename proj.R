@@ -19,8 +19,11 @@ library(readr)
 library(dplyr)
 library(igraph)
 library(maftools)
-library(SNFtool)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(pathview)
 library(mclust)
+library(SNFtool)
 
 set.seed(123)
 
@@ -161,15 +164,15 @@ colnames(filtr.expr.C) <- substr(colnames(filtr.expr.C), 1, 12)
 # QUESTION 2 : Differentially Expressed Genes (DEGs)
 ###############################################################################
 
-# 5: Compute fold change (FC) for each gene
+## Compute log2 fold change (FC)
 # FC = log2(mean expression in cancer / mean expression in normal)
 fc <- log2(rowMeans(filtr.expr.C) / rowMeans(filtr.expr.N))
 names(fc) <- rownames(filtr.expr.C)
-head(fc)
 
-# Compute paired t-test p-values gene-by-gene
+## Paired t-test for each gene
+# (same patients in tumor vs normal -> paired test)
 pval.fc <- sapply(
-  1:nrow(filtr.expr.C),
+  seq_len(nrow(filtr.expr.C)),
   function(i) {
     t.test(
       as.numeric(filtr.expr.C[i, ]),
@@ -179,31 +182,39 @@ pval.fc <- sapply(
   }
 )
 
-# Adjust p-values using FDR correction
+## Adjust p-values using FDR correction
 pval.fc.fdr <- p.adjust(pval.fc, method = "fdr")
 
-# Build table with FC + adjusted p-values
-expr.table <- data.frame(cbind(fc, pval.fc.fdr))
-expr.table[, 1] <- round(expr.table[, 1], 2)
+## Build table with FC + adjusted p-values
+expr.table <- data.frame(
+  fc = round(fc, 2),
+  pval.fc.fdr = pval.fc.fdr,
+  row.names = names(fc)
+)
 
-# Select DEGs using FC and FDR thresholds
+## Select DEGs using FC and FDR thresholds
 deg.genes <- rownames(
   expr.table[
     abs(expr.table$fc) >= 1.2 & expr.table$pval.fc.fdr <= 0.01,
   ]
 )
 
-# Inspect first 10 DEGs
+## Inspect first 10 DEGs
 head(expr.table[deg.genes, ], 10)
 
-# Save DEG table
+## Extract cancer/normal matrices only for DEGs
+filtr.expr.C.DEGs <- filtr.expr.C[rownames(filtr.expr.C) %in% deg.genes, ]
+filtr.expr.N.DEGs <- filtr.expr.N[rownames(filtr.expr.N) %in% deg.genes, ]
+
+## Save DEG table to file
 write.table(expr.table[deg.genes, ], file = "DEG.csv", sep = ";")
 
 # ------------------------------------------------------------------------------
 # Volcano plot preparation
 # ------------------------------------------------------------------------------
 
-expr.table$diffexpressed <- "/"
+## Tag genes for volcano visualization
+expr.table$diffexpressed <- "NO_CHANGE"
 expr.table$diffexpressed[
   expr.table$fc >= 1.2 & expr.table$pval.fc.fdr <= 0.01
 ] <- "UP"
@@ -211,27 +222,22 @@ expr.table$diffexpressed[
   expr.table$fc <= -1.2 & expr.table$pval.fc.fdr <= 0.01
 ] <- "DOWN"
 
-head(expr.table, 5)
-
 expr.table$diffexpressed <- as.factor(expr.table$diffexpressed)
-summary(expr.table$diffexpressed)
 
-# Volcano plot
+## Volcano plot
 ggplot(
   data = expr.table,
   aes(x = fc, y = -log10(pval.fc.fdr), col = diffexpressed)
 ) +
   geom_point() +
-  xlab("fold change (log2)") +
+  xlab("log2 Fold Change") +
   ylab("-log10 adjusted p-value") +
   geom_hline(yintercept = -log10(0.01), col = "red") +
-  geom_vline(xintercept = 1.2, col = "red") +
-  geom_vline(xintercept = -1.2, col = "red")
+  geom_vline(xintercept = c(-1.2, 1.2), col = "red")
 
 # Extract cancer/normal matrices only for DEGs
 filtr.expr.C.DEGs <- filtr.expr.C[rownames(filtr.expr.C) %in% deg.genes, ]
 filtr.expr.N.DEGs <- filtr.expr.N[rownames(filtr.expr.N) %in% deg.genes, ]
-
 
 ###############################################################################
 # QUESTION 3 : Gene Co-expression Networks
@@ -322,7 +328,7 @@ network.size(net.c)
 network.edgecount(net.c)
 clustcoeff(adj.mat.c, weighted = FALSE)$CC
 
-# Count edges
+# Count edges (undirected)
 sum(adj.mat.c != 0) / 2
 sum(adj.mat.c > 0) / 2   # positive correlations
 sum(adj.mat.c < 0) / 2   # negative correlations
@@ -370,7 +376,8 @@ net.n <- network(
   adj.mat.n,
   matrix.type = "adjacency",
   ignore.eval = FALSE,
-  names.eval = "weights"
+  names.eval = "weights",
+  directed = FALSE
 )
 
 network.density(net.n)
@@ -416,7 +423,6 @@ ggnet2(
   edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15
 ) + guides(size = "none")
 
-
 # --- Overlap between cancer and normal hubs ---
 length(names(hubs.c))          # 59
 length(names(hubs.n))          # 56
@@ -431,16 +437,13 @@ gained_hubs_coexpr
 lost_hubs_coexpr <- setdiff(names(hubs.n), names(hubs.c))
 lost_hubs_coexpr
 
-
 ###############################################################################
 # OPTIONAL VISUALIZATION – HUB SUBNETWORK
 ###############################################################################
 
-hubs.c.ids <- vector("integer", length(hubs.c))
-
-for (i in 1:length(hubs.c)) {
-  hubs.c.ids[i] <- match(names(hubs.c)[i], rownames(adj.mat.c))
-}
+# Convert hub names to indices (network vertex indices)
+hubs.c.ids <- match(names(hubs.c), rownames(adj.mat.c))
+hubs.c.ids <- na.omit(hubs.c.ids)
 
 # Identify neighbors of each cancer hub
 hubs.c.neigh <- c()
@@ -457,10 +460,14 @@ hub.c.adj <- adj.mat.c[subnet, subnet]
 
 net.hub <- network(
   hub.c.adj, matrix.type = "adjacency",
-  ignore.eval = FALSE, names.eval = "weights"
+  ignore.eval = FALSE, names.eval = "weights",
+  directed = FALSE
 )
 
 network.density(net.hub)
+
+sum(hub.c.adj > 0)
+sum(hub.c.adj < 0)
 
 net.hub %v% "type"  <- ifelse(network.vertex.names(net.hub) %in% names(hubs.c), "hub", "non-hub")
 net.hub %v% "color" <- ifelse(net.hub %v% "type" == "non-hub", "deepskyblue3", "tomato")
@@ -490,7 +497,7 @@ Z.mat <- (z.mat.C - z.mat.N) /
   sqrt((1 / (length(filtr.expr.C.DEGs) - 3)) +
          (1 / (length(filtr.expr.N.DEGs) - 3)))
 
-# Threshold |Z| < 3 -> keep only significant changes
+# Threshold |Z| < 3 -> set to 0 (keep only substantial changes)
 Z.mat[abs(Z.mat) < 3] <- 0
 
 # Binary differential adjacency matrix
@@ -564,6 +571,31 @@ gained_hubs_diffcoexpr <- setdiff(names(hubs.z), names(hubs.c))
 gained_hubs_diffcoexpr <- setdiff(gained_hubs_diffcoexpr, names(hubs.n))
 gained_hubs_diffcoexpr
 
+###############################################################################
+# Utility: Convert ENSEMBL IDs to SYMBOLs
+###############################################################################
+
+convert_to_symbols <- function(genes_ids) {
+  # Input: vector of Ensembl IDs or names with possible version numbers
+  genes_clean <- sub("\\..*$", "", genes_ids)
+  converted <- bitr(genes_clean, fromType = "ENSEMBL", toType = "SYMBOL", OrgDb = org.Hs.eg.db)
+  return(na.omit(converted$SYMBOL))
+}
+
+# Diff hubs between normal and cancer
+convert_to_symbols(setdiff(names(hubs.c), names(hubs.n)))
+
+intersect_cancer_and_diff <- intersect(names(hubs.z), names(hubs.c))
+intersect_cancer_and_diff_and_not_in_normal <- setdiff(intersect_cancer_and_diff, names(hubs.n))
+convert_to_symbols(intersect_cancer_and_diff_and_not_in_normal)
+length(intersect_cancer_and_diff_and_not_in_normal) # we have 7 specific cancer hubs in the diff co expr network
+
+intersect_normal_and_diff <- intersect(names(hubs.z), names(hubs.n))
+intersect_normal_and_diff_and_not_in_cancer <- setdiff(intersect_normal_and_diff, names(hubs.c))
+convert_to_symbols(intersect_normal_and_diff_and_not_in_cancer)
+length(intersect_normal_and_diff_and_not_in_cancer) # we have 35 specific normal hubs in the diff co expr network
+
+length(intersect(names(hubs.c),names(hubs.n))) # the lower -> the more altered it was
 
 ###############################################################################
 # QUESTION 5 : Patient Similarity Network (PSN) & Fusion
@@ -761,3 +793,144 @@ print("Fused Clusters:"); table(comm_fused)
 
 ari_score <- adjustedRandIndex(comm_expr, comm_fused)
 print(paste("Adjusted Rand Index:", ari_score))
+
+###############################################################################
+# ENRICHMENT ANALYSES & PATHVIEW (Hubs and DEGs)
+###############################################################################
+
+# Extract ENSEMBL IDs for up/down regulated genes
+res_up_ensembl   <- rownames(expr.table[expr.table$diffexpressed == "UP", , drop = FALSE])
+res_down_ensembl <- rownames(expr.table[expr.table$diffexpressed == "DOWN", , drop = FALSE])
+
+# Clean Ensembl IDs (remove version) and convert to SYMBOL
+res_up_clean   <- sub("\\..*$", "", res_up_ensembl)
+res_down_clean <- sub("\\..*$", "", res_down_ensembl)
+
+up_symbols   <- bitr(res_up_clean, fromType = "ENSEMBL", toType = "SYMBOL", OrgDb = org.Hs.eg.db)$SYMBOL
+down_symbols <- bitr(res_down_clean, fromType = "ENSEMBL", toType = "SYMBOL", OrgDb = org.Hs.eg.db)$SYMBOL
+
+comparison <- list(
+  Upregulated   = na.omit(up_symbols),
+  Downregulated = na.omit(down_symbols)
+)
+
+# GO enrichment (Biological Process)
+CompareGO_BP <- compareCluster(
+  comparison,
+  fun = "enrichGO",
+  OrgDb = org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP",
+  readable = TRUE
+)
+
+# Visualize GO enrichment
+dotplot(CompareGO_BP, title = "GO Biological Process Enrichment")
+
+# KEGG enrichment (convert to ENTREZ IDs)
+up_entrez   <- bitr(res_up_clean, fromType = "ENSEMBL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)$ENTREZID
+down_entrez <- bitr(res_down_clean, fromType = "ENSEMBL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)$ENTREZID
+
+comparison_kegg <- list(
+  Upregulated   = na.omit(up_entrez),
+  Downregulated = na.omit(down_entrez)
+)
+
+result_KEGG <- compareCluster(
+  geneClusters = comparison_kegg,
+  fun = "enrichKEGG",
+  organism = "hsa"
+)
+dotplot(result_KEGG, showCategory = 10, title = "KEGG Pathway Enrichment (Up vs Down)")
+
+kegg_table <- as.data.frame(result_KEGG)
+# View(kegg_table) # optional
+
+# ------------------------
+# PREPARE DATA FOR PATHVIEW
+# ------------------------
+
+# Combine up- and down-regulated DEGs with fold change
+matrice <- rbind(
+  expr.table[expr.table$diffexpressed == "UP", , drop = FALSE],
+  expr.table[expr.table$diffexpressed == "DOWN", , drop = FALSE]
+)
+
+# Clean Ensembl IDs and map to ENTREZ
+matrice$ENSEMBL <- sub("\\..*$", "", rownames(matrice))
+mapping <- bitr(matrice$ENSEMBL, fromType = "ENSEMBL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+
+# Merge mapping and keep fold change
+matrice <- merge(matrice, mapping, by = "ENSEMBL", all.x = TRUE)
+
+# Keep only fc and ENTREZID, remove NA
+matrice <- matrice[, c("fc", "ENTREZID")]
+matrice <- na.omit(matrice)
+
+# Aggregate possible duplicate ENTREZIDs by selecting the fc with largest absolute value
+matrice <- aggregate(fc ~ ENTREZID, data = matrice, FUN = function(x) x[which.max(abs(x))])
+
+# Set ENTREZ IDs as rownames and keep single-column matrix for pathview
+rownames(matrice) <- matrice$ENTREZID
+matrice <- matrice[, "fc", drop = FALSE]
+
+# Preview
+head(matrice)
+
+# ------------------------
+# RUN PATHVIEW
+# ------------------------
+pathway_id <- "hsa04820"  # Cytoskeleton in muscle cells
+
+pathview(
+  gene.data  = matrice,
+  species    = "hsa",
+  pathway.id = pathway_id,
+  low = list(gene = "blue"),
+  high = list(gene = "red"),
+  limit = list(gene = c(min(matrice[, 1]), max(matrice[, 1]))),
+  out.suffix = "Cyto_muscle"
+)
+
+# ------------------------
+# HUB ENRICHMENT
+# ------------------------
+
+convert_to_symbols_from_named <- function(genes_named_vector) {
+  # Input: named vector where names are ENSEMBL IDs (maybe with versions)
+  genes_clean <- sub("\\..*$", "", names(genes_named_vector))
+  res <- bitr(genes_clean, fromType = "ENSEMBL", toType = "SYMBOL", OrgDb = org.Hs.eg.db)
+  return(na.omit(res$SYMBOL))
+}
+
+hub_list <- list(
+  Cancer_Hubs = convert_to_symbols_from_named(hubs.c),
+  Normal_Hubs = convert_to_symbols_from_named(hubs.n),
+  DiffNet_Hubs = convert_to_symbols_from_named(hubs.z)
+)
+
+# GO enrichment for hubs
+hub_GO_BP <- compareCluster(
+  hub_list,
+  fun = "enrichGO",
+  OrgDb = org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP",
+  readable = TRUE
+)
+
+# Visualize
+dotplot(hub_GO_BP, title = "GO Biological Process Enrichment for Hubs")
+
+# Convert SYMBOL → ENTREZ IDs for KEGG enrichment
+hub_entrez <- lapply(hub_list, function(x) bitr(x, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)$ENTREZID)
+
+# KEGG enrichment for hubs
+hub_KEGG <- compareCluster(
+  hub_entrez,
+  fun = "enrichKEGG",
+  organism = "hsa"
+)
+
+# Visualize
+dotplot(hub_KEGG, title = "KEGG Pathway Enrichment for Hubs")
