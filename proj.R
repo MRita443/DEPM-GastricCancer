@@ -22,17 +22,25 @@ library(maftools)
 library(clusterProfiler)
 library(org.Hs.eg.db)
 library(pathview)
+library(mclust)
+library(SNFtool)
+
+set.seed(123)
+
+# NOTE: Set your working directory here if needed
+# setwd('/your/path/here')
+
+path_to_python <- 'INSERT_PATH'
+proj <- "TCGA-STAD"   # Stomach adenocarcinoma
+data_dir <- "TCGA-STAD"
 
 ###############################################
 # 1. Download data from TCGA
 ###############################################
 
-proj <- "TCGA-STAD"   # Stomach adenocarcinoma
-data_dir <- "TCGA-STAD"
-
 ## --- Primary Tumor RNA-seq data --------------------------------
 rna.query.C <- GDCquery(
-  project      = proj,
+  project       = proj,
   data.category = "Transcriptome Profiling",
   data.type     = "Gene Expression Quantification",
   workflow.type = "STAR - Counts",
@@ -46,7 +54,7 @@ genes.info <- as.data.frame(rowRanges(rna.data.C))
 
 ## --- Normal Tissue RNA-seq data --------------------------------
 rna.query.N <- GDCquery(
-  project      = proj,
+  project       = proj,
   data.category = "Transcriptome Profiling",
   data.type     = "Gene Expression Quantification",
   workflow.type = "STAR - Counts",
@@ -70,7 +78,7 @@ all(na.omit(genes.info2) == na.omit(genes.info))
 
 ## Check for duplicates
 ncol(rna.expr.data.N)
-length(unique(substr(colnames(rna.expr.data.N), 1,12))) # No duplicates 
+length(unique(substr(colnames(rna.expr.data.N), 1,12))) # No duplicates
 ncol(rna.expr.data.C)
 length(unique(substr(colnames(rna.expr.data.C), 1,12))) # No duplicates
 
@@ -140,7 +148,7 @@ dds <- dds[keep,]
 dds <- estimateSizeFactors(dds)
 normalized_counts <- counts(dds, normalized = TRUE)
 
-any(sum(rowSums(normalized_counts == 0) == ncol(expr.C))) # Verify no gene is 0 on all samples ASK: Should this check across all conjoint samples (66)?
+any(sum(rowSums(normalized_counts == 0) == ncol(expr.C)))
 
 ## Split normalized data back into Normal and Tumor
 n_norm <- ncol(expr.N)
@@ -226,6 +234,10 @@ ggplot(
   ylab("-log10 adjusted p-value") +
   geom_hline(yintercept = -log10(0.01), col = "red") +
   geom_vline(xintercept = c(-1.2, 1.2), col = "red")
+
+# Extract cancer/normal matrices only for DEGs
+filtr.expr.C.DEGs <- filtr.expr.C[rownames(filtr.expr.C) %in% deg.genes, ]
+filtr.expr.N.DEGs <- filtr.expr.N[rownames(filtr.expr.N) %in% deg.genes, ]
 
 ###############################################################################
 # QUESTION 3 : Gene Co-expression Networks
@@ -395,17 +407,21 @@ abline(v = y, col = "red")
 hubs.n <- degree.n[degree.n >= y]
 names(hubs.n)
 
-# Annotate and plot
-net.n %v% "type" = ifelse(network.vertex.names(net.n) %in% names(hubs.n),"hub", "non-hub")
-net.n %v% "color" = ifelse(net.n %v% "type" == "hub", "tomato", "deepskyblue3")
-
-network::set.edge.attribute(net.n, "edgecolor", ifelse(net.n %e% "weights" > 0, "red", "blue"))
-
-ggnet2(net.n, color = "color", alpha = 0.7, size = 2,
-       edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15) +
-  guides(size = "none") 
-
 write.table(hubs.n, file = "hubs_n.csv", sep = ";")
+
+# Annotate and plot
+net.n %v% "type"  <- ifelse(network.vertex.names(net.n) %in% names(hubs.n), "hub", "non-hub")
+net.n %v% "color" <- ifelse(net.n %v% "type" == "hub", "tomato", "deepskyblue3")
+
+network::set.edge.attribute(
+  net.n, "edgecolor",
+  ifelse(net.n %e% "weights" > 0, "red", "blue")
+)
+
+ggnet2(
+  net.n, color = "color", alpha = 0.7, size = 2,
+  edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15
+) + guides(size = "none")
 
 # --- Overlap between cancer and normal hubs ---
 length(names(hubs.c))          # 59
@@ -436,16 +452,11 @@ for (f in hubs.c.ids) {
 }
 
 hubs.c.neigh <- unique(hubs.c.neigh)
-hubs.c.neigh
-
 hubs.c.neigh.names <- rownames(adj.mat.c[hubs.c.neigh, ])
 subnet <- unique(c(names(hubs.c), hubs.c.neigh.names))
 
 # Build subnetwork adjacency matrix
 hub.c.adj <- adj.mat.c[subnet, subnet]
-
-head(rownames(hub.c.adj))
-head(colnames(hub.c.adj))
 
 net.hub <- network(
   hub.c.adj, matrix.type = "adjacency",
@@ -587,169 +598,201 @@ length(intersect_normal_and_diff_and_not_in_cancer) # we have 35 specific normal
 length(intersect(names(hubs.c),names(hubs.n))) # the lower -> the more altered it was
 
 ###############################################################################
-# QUESTION 5 : Patient Similarity Network (PSN)
+# QUESTION 5 : Patient Similarity Network (PSN) & Fusion
 ###############################################################################
 
-# Helper function to run the Python Bridge
+# --- 1. Helper Functions ---
+plot_improved_network <- function(adj_matrix, communities, title_text) {
+
+  # 1. Ensure inputs are clean
+  adj_matrix <- as.matrix(adj_matrix)
+  comm_clean <- as.character(communities)
+  comm_clean <- unname(comm_clean)
+
+  # 2. Safety Check: Dimensions
+  if (length(comm_clean) != nrow(adj_matrix)) {
+    stop(paste("ERROR: Matrix has", nrow(adj_matrix),
+               "nodes, but communities list has", length(comm_clean), "items."))
+  }
+
+  # 3. Create Network Object
+  net_obj <- network(adj_matrix, matrix.type = "adjacency",
+                     directed = FALSE, ignore.eval = FALSE, names.eval = "weights")
+  net_obj %v% "community" <- comm_clean
+
+  # 4. Define Edge Colors Logic
+  edgelist <- as.matrix.network.edgelist(net_obj)
+  comm_sender <- comm_clean[edgelist[, 1]]
+  comm_receiver <- comm_clean[edgelist[, 2]]
+  edge_colors <- ifelse(comm_sender == comm_receiver, "black", "grey90")
+
+  # 5. Handle Color Palette (Fix for "Too many groups" error)
+  n_groups <- length(unique(comm_clean))
+
+  if (n_groups > 9) {
+    # Generate distinct colors using rainbow or similar
+    my_palette <- rainbow(n_groups)
+  } else {
+    my_palette <- "Set1"
+  }
+
+  # 6. Plot
+  p <- ggnet2(net_obj,
+              mode = "fruchtermanreingold",
+              layout.par = list(cell.jitter = 0.75),
+              color = "community",
+              palette = my_palette,
+              edge.color = edge_colors,
+              edge.alpha = 0.5,
+              size = 4,
+              node.label = TRUE,
+              label.size = 2.5) +
+    ggtitle(title_text) +
+    guides(color = guide_legend(title = "Community"))
+
+  return(p)
+}
+
 run_python_community <- function(matrix_data) {
-  # 1. Save matrix to CSV format expected by python script (sep=";", dec=",")
-  write.table(matrix_data, file = "input-matrix.csv", 
+  # Clean up old files
+  if (file.exists("output.txt")) file.remove("output.txt")
+
+  # Handle NAs (Critical for Python)
+  matrix_data[is.na(matrix_data)] <- 0
+
+  # Save matrix
+  write.table(matrix_data, file = "input-matrix.csv",
               sep = ";", dec = ",", row.names = TRUE, col.names = NA)
-  
-  # 2. Run the Python script
-  # Ensure 'python3' and 'bctpy' are installed in your terminal
-  path_to_appropriate_python_interpreter = '/home/rafal/anaconda3/bin/python3'
-  system(paste(path_to_appropriate_python_interpreter,'btc-community.py input-matrix.csv'))
-  
-  # 3. Read the output
+
+  cmd <- paste(path_to_python, "btc-community.py", "input-matrix.csv")
+
+  # Run Python
+  exit_code <- system(cmd)
+
+  if (exit_code != 0) {
+    stop("Python script failed. Check if 'bctpy' is installed via pip.")
+  }
+
+  # Read output
   if(file.exists("output.txt")){
     comm <- read.table("output.txt", header = FALSE)
+
+    # Safety Check
+    if (nrow(comm) != nrow(matrix_data)) {
+      stop(paste("Dimension Mismatch: Matrix has", nrow(matrix_data),
+                 "nodes but Python returned", nrow(comm), "labels."))
+    }
     return(as.factor(comm$V1))
   } else {
-    stop("Python script did not generate output.txt")
+    stop("Python script ran but 'output.txt' was not generated.")
   }
 }
 
 # ---------------------------------------------------------
-# TASK 5a & 5b: Expression PSN + Community Detection
+# TASK 5a & 5b: Expression PSN
 # ---------------------------------------------------------
 
-# 1. Transpose: Patients as Rows
-expr.C.transposed <- t(filtr.expr.C.DEGs)
-
-# 2. Compute Similarity (Spearman)
-# We use absolute correlation for similarity strength
+# 1. Compute Similarity (Patients vs Patients)
 W_expr <- abs(cor(filtr.expr.C.DEGs, method = "spearman"))
 
-# 3. Thresholding (Optional but recommended for Louvain stability)
-# Keep only strong connections (e.g., > 0.6) to reduce noise
+# 2. Global Cleaning (Remove NAs)
+W_expr[is.na(W_expr)] <- 0
+
+# 3. Thresholding (Keep strong connections)
 W_expr_clean <- W_expr
-W_expr_clean[W_expr_clean < 0.6] <- 0 
+W_expr_clean[W_expr_clean < 0.6] <- 0
 
-diag(W_expr_clean) <- 0
+# 4. Check Dimensions (Should be roughly 30x30, NOT 1600x1600)
+print(paste("Expression Network Dimensions:", nrow(W_expr_clean), "x", ncol(W_expr_clean)))
 
-# 4. Run Python Community Detection
+# 5. Run Community Detection
 print("Running Python for Expression Communities...")
 comm_expr <- run_python_community(W_expr_clean)
 
-# 5. Visualization (Using ggnet2 style from template)
-# Create network object
-net.psn.expr <- network(W_expr_clean, matrix.type = "adjacency", directed = FALSE, ignore.eval = FALSE, names.eval = "weights")
+# 6. Visualization (Improved)
+print(plot_improved_network(W_expr_clean, comm_expr, "PSN: Gene Expression"))
 
-# Assign communities to nodes
-net.psn.expr %v% "community" = as.character(comm_expr)
+# ---------------------------------------------------------
+# TASK 5c: Similarity Network Fusion (Expr + Mutation)
+# ---------------------------------------------------------
 
-# Plot
-ggnet2(net.psn.expr, color = "community", size = 3, 
-       edge.alpha = 0.2, edge.size = 0.1,
-       main = "PSN: Gene Expression (Cancer)") +
-  guides(color = "none")
-
-
-# --- Step 1 & 2: Get Mutation Data & Matrix (Already done by you) ---
-# Ensuring proper naming
+# --- Step 1: Get Mutation Data ---
 mut.query <- GDCquery(
   project = proj,
-  data.category = "Simple Nucleotide Variation", 
-  access = "open", 
-  data.type = "Masked Somatic Mutation", 
+  data.category = "Simple Nucleotide Variation",
+  access = "open",
+  data.type = "Masked Somatic Mutation",
   workflow.type = "Aliquot Ensemble Somatic Variant Merging and Masking"
 )
 
-# 2. Prepare the data (Loads it from your hard drive)
-GDCdownload(mut.query) 
-maf <- GDCprepare(mut.query)
+# Check if data exists before downloading again to save time
+if(!file.exists(file.path(data_dir, "GDCdata"))) {
+  GDCdownload(mut.query, directory = data_dir)
+}
+maf <- GDCprepare(mut.query, directory = data_dir)
 
-# 3. Process into a Binary Matrix
+# Process into Binary Matrix
 maf.obj <- read.maf(maf)
 mut.matrix.count <- mutCountMatrix(maf.obj)
+mut.matrix.binary <- (mut.matrix.count > 0) * 1
+mut.matrix.binary <- t(mut.matrix.binary)
 
-# Create the 'mut.matrix.binary' object
-mut.matrix.binary <- (mut.matrix.count > 0) * 1 
-mut.matrix.binary <- t(mut.matrix.binary) # Transpose so Patients are Rows
-
+# --- Step 2: Alignment ---
+expr_patients_as_rows <- t(filtr.expr.C.DEGs)
+rownames(expr_patients_as_rows) <- gsub("\\.", "-", rownames(expr_patients_as_rows))
+rownames(expr_patients_as_rows) <- substr(rownames(expr_patients_as_rows), 1, 12)
 rownames(mut.matrix.binary) <- substr(rownames(mut.matrix.binary), 1, 12)
 
-# =========================================================
-# CORRECTED STEP 3: Align Patients (Fixing Separators)
-# =========================================================
+common.patients <- intersect(rownames(expr_patients_as_rows), rownames(mut.matrix.binary))
+print(paste("Number of common patients for fusion:", length(common.patients)))
 
-# 1. Fix separators in Expression Data (Replace '.' with '-')
-rownames(expr.C.transposed) <- gsub("\\.", "-", rownames(expr.C.transposed))
+if(length(common.patients) == 0) stop("No common patients found!")
 
-# 2. Ensure Mutation Data is also formatted (Trim to 12 chars if needed)
-# (Your diagnostics show they are already 12 chars, but this is safe to keep)
-rownames(mut.matrix.binary) <- substr(rownames(mut.matrix.binary), 1, 12)
-
-# 3. Now Find Intersection
-common.patients <- intersect(rownames(expr.C.transposed), rownames(mut.matrix.binary))
-print(paste("Number of common patients:", length(common.patients)))
-
-# 4. Stop if still empty (Safety check)
-if(length(common.patients) == 0) {
-  stop("No common patients! Please check if the patient IDs (e.g. TCGA-XX-XXXX) actually overlap between the two datasets.")
-}
-
-# 5. Subset both matrices to shared patients
-dat_expr_sub <- expr.C.transposed[common.patients, ]
+dat_expr_sub <- expr_patients_as_rows[common.patients, ]
 dat_mut_sub  <- mut.matrix.binary[common.patients, ]
 
-print("Step 3 Complete: Patients aligned successfully.")
-
-# --- Step 4: Compute Similarities ---
-
-# 1. Expression Similarity (Patient vs Patient)
-W_expr_sub <- abs(cor(t(dat_expr_sub), method = "spearman")) 
-
-# Normalize to 0-1
+# --- Step 3: Compute Similarities ---
+# 1. Expression
+W_expr_sub <- abs(cor(t(dat_expr_sub), method = "spearman"))
 W_expr_sub <- (W_expr_sub - min(W_expr_sub)) / (max(W_expr_sub) - min(W_expr_sub))
 
-# 2. Mutation Similarity (Jaccard)
-# Jaccard Distance = 1 - Similarity
-dist_mut <- dist(dat_mut_sub, method = "binary") # binary = Jaccard distance
+# 2. Mutation
+dist_mut <- dist(dat_mut_sub, method = "binary")
 W_mut <- 1 - as.matrix(dist_mut)
-
-# HANDLE NA: If a patient has 0 mutations, Jaccard might return NaN (0/0). 
-# We assume 0 similarity in that case.
 W_mut[is.na(W_mut)] <- 0
-
-# Normalize to 0-1 (Check if max > min to avoid division by zero)
 if(max(W_mut) > min(W_mut)){
   W_mut <- (W_mut - min(W_mut)) / (max(W_mut) - min(W_mut))
 }
 
-# --- Step 5: FUSION (Mean Fusion) ---
-# Now both matrices should be Patients x Patients (e.g., 30x30)
-if(all(dim(W_expr_sub) == dim(W_mut))) {
-  W_fused <- (W_expr_sub + W_mut) / 2
-  
-  diag(W_fused) <- 0
-  
-  W_fused[W_fused < 0.6] <- 0
-  
-  print("Fusion successful!")
-} else {
-  stop("Dimensions still do not match!")
-}
+# --- Step 4: SNF FUSION ---
+W_fused <- SNF(list(W_expr_sub, W_mut), K = 20, t = 20)
 
-# --- Step 6: Community Detection on Fused Network ---
-# Use the function you defined earlier
-comm_fused <- run_python_community(W_fused)
+rownames(W_fused) <- rownames(W_expr_sub)
+colnames(W_fused) <- colnames(W_expr_sub)
 
-# --- Step 7: Visualizing Fused Network ---
-net.psn.fused <- network(W_fused, matrix.type = "adjacency", 
-                         directed = FALSE, ignore.eval = FALSE, names.eval = "weights")
+# Clean Fused Matrix
+diag(W_fused) <- 0
 
-net.psn.fused %v% "community" = as.character(comm_fused)
+# 0.4 was too high, deleting all edges. We use 0.1 or top 5%
+W_fused_clean <- W_fused
+cutoff <- quantile(W_fused[W_fused > 0], 0.80) # Keep top 20% strongest edges
+W_fused_clean[W_fused_clean < cutoff] <- 0
 
-ggnet2(net.psn.fused, color = "community", size = 4, 
-       edge.alpha = 0.2, edge.size = 0.1,
-       node.label = TRUE, label.size = 2.5,
-       main = "PSN: Fused (Expression + Mutation)") +
-  guides(color = "none")
+print(paste("Fused Matrix Dimensions:", nrow(W_fused_clean), "x", ncol(W_fused_clean)))
+print(paste("Non-zero edges:", sum(W_fused_clean > 0)/2))
 
+# --- Step 5: Community Detection & Plotting ---
+comm_fused <- run_python_community(W_fused_clean)
+
+# Plot Improved Figure
+print(plot_improved_network(W_fused_clean, comm_fused, "PSN: Fused SNF"))
+
+# Compare Results
 print("Expression Clusters:"); table(comm_expr)
 print("Fused Clusters:"); table(comm_fused)
+
+ari_score <- adjustedRandIndex(comm_expr, comm_fused)
+print(paste("Adjusted Rand Index:", ari_score))
 
 ###############################################################################
 # ENRICHMENT ANALYSES & PATHVIEW (Hubs and DEGs)

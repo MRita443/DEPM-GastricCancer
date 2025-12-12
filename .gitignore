@@ -60,8 +60,11 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 
+# Python Env
+/venv
 
 .RDataTmp1
 DEPM-GastricCancer.Rproj
-MANIFEST.txt
 *.csv
+*.txt
+
